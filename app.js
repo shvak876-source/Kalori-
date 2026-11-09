@@ -269,7 +269,7 @@ function viewToday() {
     </div>
   </header>
 
-  <section class="hero ${over ? 'over' : ''}">
+  <section class="dash ${over ? 'over' : ''}">
     <div class="rings">
       <svg viewBox="0 0 240 240">
         <circle class="t1" cx="120" cy="120" r="${R}"/>
