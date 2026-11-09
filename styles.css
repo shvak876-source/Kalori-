@@ -259,3 +259,28 @@ details.more summary::before { content: '+ '; color: var(--blue); }
 details.more[open] summary::before { content: '− '; }
 .scanfull { width: 100%; border-radius: 16px; margin-bottom: 12px; display: block; }
 .steps { margin: 0 0 12px; padding-inline-start: 20px; } .steps li { margin: 2px 0; } .steps a { color: var(--blue); }
+
+/* ---------- barcode & scan options ---------- */
+.scanopts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.scanbig { position: relative; display: grid; justify-items: center; align-content: center; gap: 4px; text-align: center; min-height: 150px; padding: 16px 10px; border-radius: 22px; background: var(--card); border: 1px solid var(--line); color: var(--muted); }
+.scanbig svg { width: 38px; height: 38px; color: var(--blue); margin-bottom: 4px; }
+.scanbig b { color: var(--ink); font-size: 16px; }
+.scanbig span { font-size: 12px; line-height: 1.4; }
+.scanbig input { position: absolute; inset: 0; opacity: 0; }
+.scanbig.primary { background: var(--ink); border-color: var(--ink); color: #b9c6dc; }
+.scanbig.primary b, .scanbig.primary svg { color: #fff; }
+.scanopts:has(.scanbig:only-child) { grid-template-columns: 1fr; }
+.linkrow { display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; margin-top: 6px; }
+.info { background: var(--blue-soft); border-radius: 14px; padding: 12px 14px; font-size: 14px; line-height: 1.6; margin-bottom: 12px; }
+.cam { position: relative; aspect-ratio: 4/3; border-radius: 22px; overflow: hidden; background: #0e1726; }
+.cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.camframe { position: absolute; inset: 30% 12%; border: 3px solid rgba(255,255,255,.9); border-radius: 14px; box-shadow: 0 0 0 999px rgba(0,0,0,.35); }
+.camframe::after { content: ''; position: absolute; left: 8%; right: 8%; top: 50%; height: 2px; background: #ff5a4e; box-shadow: 0 0 8px #ff5a4e; animation: scanline 1.6s ease-in-out infinite alternate; }
+@keyframes scanline { from { transform: translateY(-24px); } to { transform: translateY(24px); } }
+.camerr { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 20px; color: #fff; font-size: 14px; line-height: 1.6; }
+.codeform { display: flex; gap: 8px; }
+.codeform .input { flex: 1; text-align: center; }
+.codeform .btn { height: 50px; }
+.keybox { background: var(--soft); border-radius: 16px; padding: 12px; margin-bottom: 10px; }
+.keybox .steps { margin: 6px 0 10px; }
+.toast { white-space: normal; text-align: right; }

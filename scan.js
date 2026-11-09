@@ -220,24 +220,118 @@ Return the values PER 100 g (or per 100 ml for drinks).
       if (!res.ok) { lastErr = new AiError('server'); continue; }
       const j = await res.json();
       const txt = j?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
-      let o;
-      try { o = JSON.parse(txt); } catch (e) { throw new AiError('parse'); }
       onProgress && onProgress(1, 'מוכן');
-      const vals = {}, found = {};
-      KEYS.forEach(k => {
-        const v = Number(o[k]);
-        if (o[k] != null && isFinite(v) && v >= 0 && v <= MAX[k]) { vals[k] = Math.round(v * 10) / 10; found[k] = true; }
-      });
-      let estimated = false;
-      if (vals.kcal == null && vals.protein != null && vals.carbs != null && vals.fat != null) {
-        vals.kcal = Math.round(4 * vals.protein + 4 * vals.carbs + 9 * vals.fat); estimated = true;
-      }
-      return { vals, found, estimated, basisMl: !!o.basisMl, name: o.name || '', servingGrams: Number(o.servingGrams) || null, ai: true, model };
+      return normalizeAi(parseJson(txt), 'Gemini');
     }
     throw lastErr || new AiError('server');
   }
 
-  const api = { parse, consistent, scan, aiScan };
+  function parseJson(txt) {
+    const m = String(txt).match(/\{[\s\S]*\}/);
+    try { return JSON.parse(m ? m[0] : txt); } catch (e) { throw new AiError('parse'); }
+  }
+  function normalizeAi(o, source) {
+    const vals = {}, found = {};
+    KEYS.forEach(k => {
+      const v = Number(o[k]);
+      if (o[k] != null && o[k] !== '' && isFinite(v) && v >= 0 && v <= MAX[k]) { vals[k] = Math.round(v * 10) / 10; found[k] = true; }
+    });
+    let estimated = false;
+    if (vals.kcal == null && vals.protein != null && vals.carbs != null && vals.fat != null) {
+      vals.kcal = Math.round(4 * vals.protein + 4 * vals.carbs + 9 * vals.fat); estimated = true;
+    }
+    return { vals, found, estimated, basisMl: !!o.basisMl, name: typeof o.name === 'string' ? o.name : '', servingGrams: Number(o.servingGrams) || null, ai: true, source };
+  }
+
+  /* ---------- AI scan via Groq (free tier, OpenAI-compatible API) ---------- */
+  const GROQ_MODELS = ['meta-llama/llama-4-scout-17b-16e-instruct', 'qwen/qwen3.6-27b', 'meta-llama/llama-4-maverick-17b-128e-instruct'];
+  async function groqScan(file, key, onProgress) {
+    onProgress && onProgress(0.15, 'שולח ל־AI (Groq)…');
+    const data = await toJpegBase64(file, 1280);
+    onProgress && onProgress(0.35, 'ה־AI קורא את התווית…');
+    let lastErr;
+    for (const model of GROQ_MODELS) {
+      let res;
+      try {
+        res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+          body: JSON.stringify({
+            model, temperature: 0, response_format: { type: 'json_object' },
+            messages: [{ role: 'user', content: [
+              { type: 'text', text: PROMPT + '\nReply with a single JSON object with exactly these keys: ' + KEYS.join(', ') + ', name, servingGrams, basisMl.' },
+              { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + data } },
+            ] }],
+          }),
+        });
+      } catch (e) { throw new AiError('network'); }
+      if (res.status === 401 || res.status === 403) throw new AiError('key');
+      if (res.status === 429) throw new AiError('quota');
+      if (!res.ok) { lastErr = new AiError(res.status === 404 || res.status === 400 ? 'model' : 'server'); continue; }
+      const j = await res.json();
+      onProgress && onProgress(1, 'מוכן');
+      return normalizeAi(parseJson(j?.choices?.[0]?.message?.content || ''), 'Groq');
+    }
+    throw lastErr || new AiError('server');
+  }
+
+  /* ---------- barcode ---------- */
+  let detectorP = null;
+  function getDetector() {
+    if (!detectorP) {
+      detectorP = (async () => {
+        const formats = ['ean_13', 'ean_8', 'upc_a', 'upc_e'];
+        if ('BarcodeDetector' in root) {
+          try {
+            const sup = await root.BarcodeDetector.getSupportedFormats();
+            if (formats.some(f => sup.includes(f))) return new root.BarcodeDetector({ formats });
+          } catch (e) { /* fall through to bundled reader */ }
+        }
+        if (!root.KaloriBarcodeDetector) await loadScript('vendor/barcode.js');
+        return new root.KaloriBarcodeDetector({ formats });
+      })().catch(e => { detectorP = null; throw e; });
+    }
+    return detectorP;
+  }
+  async function detectBarcode(source) {
+    const d = await getDetector();
+    let src = source;
+    if (source instanceof Blob) src = await createImageBitmap(source);
+    const r = await d.detect(src);
+    return r && r.length ? r[0].rawValue : null;
+  }
+
+  /* Open Food Facts — free, no key. Returns null when the product is unknown. */
+  async function lookupBarcode(code) {
+    const fields = 'product_name,product_name_he,brands,nutriments,serving_quantity,product_quantity';
+    let res;
+    try { res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=${fields}`); }
+    catch (e) { throw new AiError('network'); }
+    if (res.status === 404) return null;
+    if (!res.ok) throw new AiError('server');
+    const j = await res.json();
+    if (!j || j.status === 0 || !j.product) return null;
+    const p = j.product, n = p.nutriments || {};
+    const g = k => (n[k] != null && n[k] !== '' && isFinite(Number(n[k]))) ? Number(n[k]) : null;
+    let kcal = g('energy-kcal_100g');
+    if (kcal == null && g('energy_100g') != null) kcal = g('energy_100g') / 4.184;
+    let sodium = g('sodium_100g');
+    if (sodium == null && g('salt_100g') != null) sodium = g('salt_100g') * 0.4;
+    const o = {
+      kcal, protein: g('proteins_100g'), carbs: g('carbohydrates_100g'), sugar: g('sugars_100g'),
+      fat: g('fat_100g'), satFat: g('saturated-fat_100g'), fiber: g('fiber_100g'),
+      sodium: sodium != null ? sodium * 1000 : null, // g → mg
+    };
+    const r = normalizeAi(o, 'Open Food Facts');
+    r.ai = false;
+    r.name = [p.product_name_he || p.product_name, p.brands && !(p.product_name_he || p.product_name || '').includes(p.brands.split(',')[0]) ? p.brands.split(',')[0] : '']
+      .filter(Boolean).join(' · ').trim();
+    r.servingGrams = Number(p.serving_quantity) || Number(p.product_quantity) || null;
+    r.hasValues = Object.keys(r.found).length > 0;
+    return r;
+  }
+
+  const api = { parse, consistent, scan, aiScan, groqScan, detectBarcode, getDetector, lookupBarcode };
   root.KaloriScan = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -45,15 +45,11 @@ function save() {
 }
 
 /* AI key lives apart from the data, so it never ends up in a backup file */
-const AI_KEY = 'kalori.aikey';
-function getAiKey() { try { return localStorage.getItem(AI_KEY) || ''; } catch (e) { return ''; } }
-function setAiKey(k) { try { k ? localStorage.setItem(AI_KEY, k) : localStorage.removeItem(AI_KEY); } catch (e) { /* ignore */ } }
-const AI_ERR = {
-  key: 'מפתח ה־AI לא תקין — בדקו אותו בלשונית "יעדים"',
-  quota: 'נגמרה המכסה החינמית של ה־AI לעכשיו',
-  network: 'אין חיבור ל־AI',
-  parse: 'ה־AI החזיר תשובה לא ברורה',
-};
+const KEY_STORE = { gemini: 'kalori.aikey', groq: 'kalori.groqkey' };
+function getKey(n) { try { return localStorage.getItem(KEY_STORE[n]) || ''; } catch (e) { return ''; } }
+function setKey(n, k) { try { k ? localStorage.setItem(KEY_STORE[n], k) : localStorage.removeItem(KEY_STORE[n]); } catch (e) { /* ignore */ } }
+const hasAi = () => !!(getKey('gemini') || getKey('groq'));
+const AI_ERR = { key: 'מפתח לא תקין', quota: 'נגמרה המכסה', network: 'אין חיבור', parse: 'תשובה לא ברורה', model: 'הדגם לא זמין', server: 'שגיאת שרת' };
 
 /* ---------- helpers ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -86,6 +82,7 @@ const I = {
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   right: '<svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>',
   left: '<svg viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>',
+  barcode: '<svg viewBox="0 0 24 24"><path d="M4 6v12M7 6v12M10 6v12M14 6v12M16 6v12M20 6v12M3 4h3M18 4h3M3 20h3M18 20h3"/></svg>',
   camera: '<svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
   pulse: '<svg viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>',
   more: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
@@ -496,16 +493,29 @@ function viewSettings() {
   </section>
 
   <section class="card" id="ai-card">
-    <div class="card-h"><h2>✨ סריקה חכמה (AI)</h2><span class="meta">${getAiKey() ? 'מחובר' : 'לא מחובר'}</span></div>
-    <p class="note" style="margin:0 0 10px">ה־AI של Google ‏(Gemini) קורא תוויות הרבה יותר טוב מהסורק הרגיל — גם בצילום עקום, וגם ממיר לבד מ"למנה" ל־100 גרם. המפתח חינמי:</p>
-    <ol class="note steps">
-      <li>נכנסים ל־<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> עם חשבון Google</li>
-      <li>לוחצים <b>Create API key</b> ומעתיקים</li>
-      <li>מדביקים כאן</li>
-    </ol>
-    <label class="field"><span>מפתח API</span>
-      <input class="input" id="aikey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza…" value="${esc(getAiKey())}"></label>
-    <p class="note" style="margin:0">המפתח נשמר רק בטלפון הזה. בגרסה החינמית יש מגבלת כמות (מספיק בהרבה לשימוש אישי), ו־Google רשאית להשתמש בתמונות לשיפור השירות — אז לצלם רק את התווית.</p>
+    <div class="card-h"><h2>✨ סריקה חכמה (AI)</h2><span class="meta" id="ai-status">${aiStatus()}</span></div>
+    <p class="note" style="margin:0 0 12px">AI קורא תוויות הרבה יותר טוב מהסורק הרגיל — גם בצילום עקום, וממיר לבד מ"למנה" ל־100 גרם.
+      שני השירותים חינמיים. אפשר לחבר אחד או את שניהם: <b>Gemini קודם, ו־Groq נכנס כגיבוי</b> כשהמכסה נגמרת.</p>
+
+    <div class="keybox">
+      <b>1 · Google Gemini</b> <span class="note">(מומלץ)</span>
+      <ol class="note steps">
+        <li>נכנסים ל־<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> עם חשבון Google</li>
+        <li>לוחצים <b>Create API key</b>, מעתיקים ומדביקים:</li>
+      </ol>
+      <input class="input" data-key="gemini" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza…" value="${esc(getKey('gemini'))}">
+    </div>
+
+    <div class="keybox">
+      <b>2 · Groq</b> <span class="note">(גיבוי)</span>
+      <ol class="note steps">
+        <li>נרשמים ב־<a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> (בלי כרטיס אשראי)</li>
+        <li>לוחצים <b>Create API Key</b>, מעתיקים ומדביקים:</li>
+      </ol>
+      <input class="input" data-key="groq" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="gsk_…" value="${esc(getKey('groq'))}">
+    </div>
+
+    <p class="note" style="margin:10px 0 0">המפתחות נשמרים רק בטלפון הזה ולא נכנסים לגיבוי. בגרסאות החינמיות יש מגבלת כמות (מספיקה לשימוש אישי), והשירותים רשאים להשתמש בתמונות לשיפור — אז לצלם רק את התווית.</p>
   </section>
 
   <section class="card">
@@ -519,6 +529,10 @@ function viewSettings() {
   </section>`;
 }
 
+function aiStatus() {
+  const on = [getKey('gemini') && 'Gemini', getKey('groq') && 'Groq'].filter(Boolean);
+  return on.length ? `מחובר: ${on.join(' + ')}` : 'לא מחובר';
+}
 function bindProfileForm(root, onboarding) {
   const form = $('#pform', root);
   let p = { ...(onboarding ? (S._draft || defaultProfile()) : S.profile) };
@@ -558,11 +572,12 @@ function bindProfileForm(root, onboarding) {
     };
     ok.addEventListener('input', ov); op.addEventListener('input', ov);
     $('#import').addEventListener('change', importBackup);
-    $('#aikey').addEventListener('change', ev => {
-      setAiKey(ev.target.value.trim());
-      $('#ai-card .meta').textContent = getAiKey() ? 'מחובר' : 'לא מחובר';
-      toast(getAiKey() ? 'הסריקה החכמה הופעלה ✨' : 'הסריקה החכמה כובתה');
-    });
+    document.querySelectorAll('[data-key]').forEach(inp => inp.addEventListener('change', () => {
+      const n = inp.dataset.key, name = n === 'gemini' ? 'Gemini' : 'Groq';
+      setKey(n, inp.value.trim());
+      $('#ai-status').textContent = aiStatus();
+      toast(getKey(n) ? `${name} חובר ✨` : `${name} נותק`);
+    }));
   }
 }
 
@@ -595,6 +610,7 @@ function closeSheet(instant) {
   openSheet = null;
   document.body.classList.remove('sheet-open');
   if (document.activeElement) document.activeElement.blur();
+  stopCamera();
   if (instant) { root.innerHTML = ''; return; }
   $('.sheet', root)?.classList.remove('show');
   $('.backdrop', root)?.classList.remove('show');
@@ -622,13 +638,13 @@ function openAdd(mode) {
     body: `
       <div class="seg" id="addseg">
         <button data-mode="mine">המוצרים שלי</button>
-        <button data-mode="scan">סריקת תווית</button>
+        <button data-mode="scan">סריקה</button>
         <button data-mode="once">חד־פעמי</button>
       </div>
       <div id="addbody"></div>`,
     footer: `<button class="btn" data-act="close-sheet" id="donebtn">סיום</button>`,
     onMount: el => {
-      $('#addseg', el).addEventListener('click', e => { const b = e.target.closest('button'); if (b) { addMode = b.dataset.mode; drawAdd(); } });
+      $('#addseg', el).addEventListener('click', e => { const b = e.target.closest('button'); if (b) { stopCamera(); if (scanState && scanState.phase === 'camera') scanState = null; addMode = b.dataset.mode; drawAdd(); } });
       drawAdd();
     },
     refresh: () => { if (addMode !== 'scan') drawAdd(true); else drawAddCount(); },
@@ -722,19 +738,52 @@ const GRAM_CHIPS = [30, 50, 100, 150, 200, 250];
 function drawScan(body) {
   const st = scanState;
   if (!st || st.phase === 'idle' || st.phase === 'error') {
+    const bc = st && st.barcode;
     body.innerHTML = `
-      <label class="scanbox">
-        ${I.camera}
-        <b>צלמו את טבלת הערכים התזונתיים</b>
-        <span>בצילום ישר וקרוב, עם תאורה טובה</span>
-        <input type="file" accept="image/*" id="scanfile">
-      </label>
-      ${st && st.error ? `<div class="warn">${esc(st.error)}</div>` : ''}
-      <p class="note" style="text-align:center">נזהה קלוריות, חלבון, פחמימות, סוכרים, שומן, שומן רווי, סיבים ונתרן,
-        ונחשב לפי כמות הגרמים שאכלתם. מה שלא יזוהה — תתבקשו להשלים.</p>
-      ${getAiKey() ? '<p class="note" style="text-align:center">✨ סריקה חכמה עם AI פעילה</p>' : '<p class="note" style="text-align:center">רוצים זיהוי מדויק הרבה יותר? <button class="link" data-act="goto-ai">חברו AI חינמי</button></p>'}
-      <button class="link" style="display:block;margin:6px auto" data-act="scan-manual">אין תמונה? הקלדה ידנית של הטבלה</button>`;
+      ${bc ? `<div class="info">${st.error ? esc(st.error) : `ברקוד <b dir="ltr">${esc(bc)}</b> לא נמצא במאגר${st.pendingName ? ` (או שחסרים בו ערכים)` : ''}.`}
+        <br><b>צלמו את התווית פעם אחת</b> — והמוצר יישמר עם הברקוד, כך שבפעם הבאה זה מיידי.</div>` : ''}
+      ${!bc && st && st.error ? `<div class="warn" style="margin:0 0 12px">${esc(st.error)}</div>` : ''}
+      <div class="scanopts">
+        ${bc ? '' : `<button class="scanbig primary" data-act="barcode-start">
+          ${I.barcode}<b>סריקת ברקוד</b><span>הכי מהיר · מאגר מוצרים חינמי</span></button>`}
+        <label class="scanbig ${bc ? 'primary' : ''}">
+          ${I.camera}<b>צילום תווית</b><span>טבלת הערכים התזונתיים</span>
+          <input type="file" accept="image/*" id="scanfile">
+        </label>
+      </div>
+      <p class="note" style="text-align:center">${hasAi() ? `✨ קריאת תוויות עם AI פעילה (${esc(aiStatus().replace('מחובר: ', ''))})` : 'רוצים קריאת תוויות מדויקת הרבה יותר? <button class="link" data-act="goto-ai">חברו AI חינמי</button>'}</p>
+      <div class="linkrow">
+        <button class="link" data-act="scan-manual">הקלדה ידנית של הטבלה</button>
+        ${bc ? '<button class="link" data-act="scan-again">ביטול</button>' : ''}
+      </div>`;
     $('#scanfile', body).addEventListener('change', ev => runScan(ev.target.files[0]));
+    return;
+  }
+  if (st.phase === 'camera') {
+    body.innerHTML = `
+      <div class="cam" id="camwrap">
+        <video id="camvideo" playsinline muted autoplay></video>
+        <div class="camframe"></div>
+      </div>
+      <p class="note" style="text-align:center;margin:10px 0 12px">כוונו את הברקוד למסגרת — הזיהוי אוטומטי</p>
+      <form class="codeform" id="codeform" autocomplete="off">
+        <input class="input" id="codein" inputmode="numeric" pattern="[0-9]*" placeholder="או הקלידו את המספר שמתחת לברקוד" dir="ltr">
+        <button class="btn small" type="submit">חיפוש</button>
+      </form>
+      <div class="linkrow">
+        <label class="link" style="position:relative">צילום תמונה של הברקוד<input type="file" accept="image/*" id="bcfile" style="position:absolute;inset:0;opacity:0"></label>
+        <button class="link" data-act="scan-again">ביטול</button>
+      </div>`;
+    $('#codeform', body).addEventListener('submit', ev => { ev.preventDefault(); const c = $('#codein', body).value.replace(/\D/g, ''); if (c) { stopCamera(); handleBarcode(c); } });
+    $('#bcfile', body).addEventListener('change', async ev => {
+      const f = ev.target.files[0]; if (!f) return;
+      stopCamera();
+      try {
+        const code = await KaloriScan.detectBarcode(f);
+        if (code) handleBarcode(code);
+        else { toast('לא מצאתי ברקוד בתמונה — נסו שוב או הקלידו את המספר'); startBarcode(); }
+      } catch (e) { toast('לא הצלחתי לקרוא את התמונה'); startBarcode(); }
+    });
     return;
   }
   if (st.phase === 'reading') {
@@ -754,7 +803,7 @@ function drawScan(body) {
     <div class="scanhead">
       ${st.photo ? `<div class="thumb" style="background-image:url('${st.photo}')"></div>` : ''}
       <div>
-        <b>${st.manual ? 'הקלדת ערכים ל־100 ג׳' : `${st.ai ? '✨ ה־AI זיהה' : 'זוהו'} ${foundN} מתוך ${NUTR.length} ערכים`}</b>
+        <b>${st.manual ? 'הקלדת ערכים ל־100 ג׳' : st.source === 'off' ? `נמצא במאגר · ${foundN} מתוך ${NUTR.length} ערכים` : `${st.ai ? `✨ ${esc(st.aiName || 'ה־AI')} זיהה` : 'זוהו'} ${foundN} מתוך ${NUTR.length} ערכים`}</b>
         <div class="note" id="scanmiss">${missingText(missing)}</div>
       </div>
     </div>
@@ -763,7 +812,8 @@ function drawScan(body) {
     ${!ok ? `<div class="warn" style="margin:0 0 12px">הקלוריות לא מסתדרות עם החלבון/פחמימות/שומן — כדאי לבדוק שהמספרים נכונים.</div>` : ''}
     <div class="card">
       <div class="card-h"><h2>ערכים ל־100 ${st.basisMl ? 'מ״ל' : 'גרם'}</h2><span class="meta">אפשר לתקן</span></div>
-      ${st.manual || st.ai ? '' : '<p class="note" style="margin:-4px 0 10px">שווה להעיף מבט — לפעמים נקודה עשרונית נבלעת (2.5 נקרא 25).</p>'}
+      ${st.source === 'off' ? '<p class="note" style="margin:-4px 0 10px">מהמאגר הפתוח Open Food Facts — את הנתונים מזינים משתמשים, אז שווה להעיף מבט.</p>' : ''}
+      ${st.manual || st.ai || st.source === 'off' ? '' : '<p class="note" style="margin:-4px 0 10px">שווה להעיף מבט — לפעמים נקודה עשרונית נבלעת (2.5 נקרא 25).</p>'}
       <div class="nutgrid" id="nutgrid">
         ${NUTR.map(n => nutField(n, st)).join('')}
       </div>
@@ -776,10 +826,10 @@ function drawScan(body) {
     </div>
     <div class="card">
       <label class="field"><span>שם</span><input class="input" id="scanname" placeholder="לא חובה" value="${esc(st.name || '')}"></label>
-      <label class="check" style="margin-bottom:0"><input type="checkbox" id="scankeep" ${st.keep ? 'checked' : ''}> לשמור במוצרים שלי (לפי 100 גרם)</label>
+      <label class="check" style="margin-bottom:0"><input type="checkbox" id="scankeep" ${st.keep ? 'checked' : ''}> לשמור במוצרים שלי${st.barcode ? ' (עם הברקוד — בפעם הבאה מיידי)' : ''}</label>
     </div>
     <button class="btn" id="scanadd">${I.plus} הוספה ליומן</button>
-    <button class="link" style="display:block;margin:14px auto 0" data-act="scan-again">צילום מחדש</button>`;
+    <button class="link" style="display:block;margin:14px auto 0" data-act="scan-again">התחלה מחדש</button>`;
 
   const grid = $('#nutgrid', body);
   grid.addEventListener('input', ev => {
@@ -834,10 +884,11 @@ function drawScanResult(body) {
 async function runScan(file) {
   if (!file) return;
   const body = $('#addbody');
+  const prevSt = scanState || {};
   let photo = '';
   try { photo = await shrinkImage(file, 320); } catch (e) { /* preview only */ }
   const full = URL.createObjectURL(file);
-  scanState = { phase: 'reading', progress: 0, msg: 'מכין את הסורק…', photo, full };
+  scanState = { phase: 'reading', progress: 0, msg: 'מכין את הסורק…', photo, full, barcode: prevSt.barcode || null };
   drawScan(body);
   let last = 0;
   const prog = (p, msg) => {
@@ -848,20 +899,23 @@ async function runScan(file) {
   };
   try {
     let r = null;
-    const key = getAiKey();
-    if (key) {
-      try { r = await KaloriScan.aiScan(file, key, prog); }
-      catch (e) {
-        toast(`${AI_ERR[e.kind] || 'ה־AI לא זמין כרגע'} — עובר לסורק הרגיל`);
-        if (scanState) { scanState.progress = 0; }
-      }
+    const chain = [];
+    if (getKey('gemini')) chain.push(['Gemini', () => KaloriScan.aiScan(file, getKey('gemini'), prog)]);
+    if (getKey('groq')) chain.push(['Groq', () => KaloriScan.groqScan(file, getKey('groq'), prog)]);
+    const fails = [];
+    for (const [name, run] of chain) {
+      try { r = await run(); break; }
+      catch (e) { fails.push(`${name}: ${AI_ERR[e.kind] || 'לא זמין'}`); if (scanState) scanState.progress = 0; }
     }
-    if (!r) r = await KaloriScan.scan(file, prog);
+    if (!r) {
+      if (fails.length) toast(`${fails.join(' · ')} — עובר לסורק הרגיל`);
+      r = await KaloriScan.scan(file, prog);
+    } else if (fails.length) toast(`${fails.join(' · ')} — נסרק עם ${r.source}`);
     if (!scanState) return;
     const vals = {}; NUTR.forEach(n => { vals[n.k] = r.vals[n.k] != null ? r.vals[n.k] : null; });
     const anything = Object.values(vals).some(x => x != null);
     const grams = r.servingGrams && r.servingGrams > 0 && r.servingGrams <= 2000 ? Math.round(r.servingGrams) : 100;
-    Object.assign(scanState, { phase: 'edit', vals, estimated: r.estimated, basisMl: r.basisMl, grams, keep: false, name: r.name || '', ai: !!r.ai, serving: r.servingGrams || null });
+    Object.assign(scanState, { phase: 'edit', vals, estimated: r.estimated, basisMl: r.basisMl, grams, keep: !!prevSt.barcode, name: r.name || prevSt.pendingName || '', ai: !!r.ai, aiName: r.source, serving: r.servingGrams || null });
     if (!anything) scanState.notice = true;
   } catch (e) {
     scanState = { phase: 'error', error: 'לא הצלחתי לקרוא את התמונה. בדקו חיבור לאינטרנט (בסריקה הראשונה מורידים את הסורק) ונסו שוב, או הקלידו ידנית.' };
@@ -869,6 +923,88 @@ async function runScan(file) {
   const b = $('#addbody'); if (b && addMode === 'scan') drawScan(b);
   if (scanState && scanState.notice) { toast('לא זוהו ערכים — נסו צילום קרוב יותר, או השלימו ידנית'); scanState.notice = false; }
 }
+/* ---------- barcode ---------- */
+let cam = null;
+function stopCamera() {
+  if (!cam) return;
+  cam.stopped = true;
+  if (cam.stream) cam.stream.getTracks().forEach(t => t.stop());
+  cam = null;
+}
+async function startBarcode() {
+  stopCamera();
+  scanState = { phase: 'camera' };
+  const body = $('#addbody'); if (!body) return;
+  drawScan(body);
+  const c = cam = { stopped: false };
+  const detP = KaloriScan.getDetector();
+  detP.catch(() => {});
+  const fail = msg => {
+    if (c.stopped) return;
+    const w = $('#camwrap'); if (w) w.innerHTML = `<div class="camerr">${msg}</div>`;
+  };
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return fail('אין גישה למצלמה כאן — צלמו תמונה של הברקוד או הקלידו את המספר');
+  try {
+    c.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } });
+    if (c.stopped) { c.stream.getTracks().forEach(t => t.stop()); return; }
+    const v = $('#camvideo'); if (!v) return stopCamera();
+    v.srcObject = c.stream;
+    await v.play().catch(() => {});
+  } catch (e) {
+    return fail('לא קיבלתי הרשאה למצלמה. אפשר לאשר בהגדרות הטלפון, או לצלם תמונה / להקליד את המספר.');
+  }
+  let det;
+  try { det = await detP; } catch (e) { return fail('לא הצלחתי לטעון את קורא הברקודים — בדקו חיבור לאינטרנט, או הקלידו את המספר'); }
+  const v = $('#camvideo');
+  const tick = async () => {
+    if (c.stopped || !v.isConnected) return;
+    try {
+      if (v.readyState >= 2) {
+        const r = await det.detect(v);
+        if (r && r.length && !c.stopped) {
+          stopCamera();
+          if (navigator.vibrate) navigator.vibrate(60);
+          return handleBarcode(r[0].rawValue);
+        }
+      }
+    } catch (e) { /* keep trying */ }
+    setTimeout(tick, 160);
+  };
+  tick();
+}
+async function handleBarcode(raw) {
+  const code = String(raw).replace(/\D/g, '');
+  const body = $('#addbody'); if (!body) return;
+  if (code.length < 6) { toast('המספר קצר מדי לברקוד'); return; }
+  // 1) already one of my products → add right away
+  const mine = S.products.find(p => p.barcode === code);
+  if (mine) {
+    addProduct(mine);
+    addedInSheet[mine.id] = (addedInSheet[mine.id] || 0) + 1;
+    scanState = null; drawScan(body); drawAddCount();
+    return;
+  }
+  // 2) look it up in Open Food Facts
+  scanState = { phase: 'reading', progress: 0.5, msg: `מחפש את ${code} במאגר המוצרים…`, barcode: code };
+  drawScan(body);
+  let r = null;
+  try { r = await KaloriScan.lookupBarcode(code); }
+  catch (e) {
+    if (!scanState || scanState.barcode !== code) return;
+    scanState = { phase: 'idle', barcode: code, error: 'אין חיבור למאגר המוצרים כרגע.' };
+    return drawScan($('#addbody'));
+  }
+  if (!scanState || scanState.barcode !== code) return;
+  if (r && r.hasValues && r.vals.kcal != null) {
+    const vals = {}; NUTR.forEach(n => { vals[n.k] = r.vals[n.k] != null ? r.vals[n.k] : null; });
+    const grams = r.servingGrams && r.servingGrams > 0 && r.servingGrams <= 2000 ? Math.round(r.servingGrams) : 100;
+    scanState = { phase: 'edit', source: 'off', vals, estimated: r.estimated, grams, serving: r.servingGrams || null, name: r.name || '', keep: true, barcode: code };
+  } else {
+    scanState = { phase: 'idle', barcode: code, pendingName: r ? r.name : '' };
+  }
+  drawScan($('#addbody'));
+}
+
 function submitScan(body) {
   const st = scanState, v = st.vals, grams = num(st.grams);
   if (v.kcal == null || !(grams > 0)) return;
@@ -877,6 +1013,7 @@ function submitScan(body) {
   const name = (st.name || '').trim();
   if (st.keep) {
     const p = { ...per, id: uid(), name: name || `מוצר ${S.products.length + 1}`, mode: 'g', defaultQty: grams, photo: st.photo || '', uses: 0 };
+    if (st.barcode) { S.products.forEach(x => { if (x.barcode === st.barcode) delete x.barcode; }); p.barcode = st.barcode; }
     S.products.push(p);
     addProduct(p, grams);
     addedInSheet[p.id] = 1;
@@ -1076,7 +1213,8 @@ document.addEventListener('click', ev => {
       break;
     }
     case 'goto-ai': closeSheet(true); tab = 'settings'; render(); setTimeout(() => $('#ai-card').scrollIntoView({ behavior: 'smooth' }), 50); break;
-    case 'scan-again': scanState = null; drawScan($('#addbody')); break;
+    case 'scan-again': stopCamera(); scanState = null; drawScan($('#addbody')); break;
+    case 'barcode-start': startBarcode(); break;
     case 'scan-photo': if (scanState) { scanState.showPhoto = !scanState.showPhoto; drawScan($('#addbody')); } break;
     case 'scan-manual': {
       const vals = {}; NUTR.forEach(n => { vals[n.k] = null; });
@@ -1127,6 +1265,7 @@ document.addEventListener('click', ev => {
 
 /* new day while app stays open in background */
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && cam) { stopCamera(); if (scanState && scanState.phase === 'camera') { scanState = null; const b = $('#addbody'); if (b) drawScan(b); } }
   if (document.visibilityState === 'visible' && tab === 'today' && !openSheet) render();
 });
 
