@@ -1,6 +1,6 @@
 // Network-first so updates arrive immediately; cache is the offline fallback.
-const CACHE = 'kalori-v1';
-const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.json', 'icons/icon-180.png', 'icons/icon-192.png'];
+const CACHE = 'kalori-v2';
+const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'scan.js', 'manifest.json', 'icons/icon-180.png', 'icons/icon-192.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

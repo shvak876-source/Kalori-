@@ -100,10 +100,25 @@ function goals() {
 }
 
 /* entry / product values */
+const EXTRA = [
+  { k: 'carbs',  l: 'פחמימות',        u: 'ג׳' },
+  { k: 'sugar',  l: 'מתוכן סוכרים',   u: 'ג׳', sub: true },
+  { k: 'fat',    l: 'שומן',           u: 'ג׳' },
+  { k: 'satFat', l: 'מתוכו רווי',     u: 'ג׳', sub: true },
+  { k: 'fiber',  l: 'סיבים תזונתיים', u: 'ג׳' },
+  { k: 'sodium', l: 'נתרן',           u: 'מ״ג' },
+];
+const NUTR = [{ k: 'kcal', l: 'קלוריות', u: 'קק״ל' }, { k: 'protein', l: 'חלבון', u: 'ג׳' }, ...EXTRA];
+function pickN(src) {
+  const o = {};
+  NUTR.forEach(({ k }) => { if (src[k] != null && src[k] !== '' && isFinite(src[k])) o[k] = Number(src[k]); });
+  return o;
+}
 const isGram = x => x.mode === 'g';
 function factor(x, qty) { return isGram(x) ? qty / 100 : qty; }
 function entryKcal(e) { return e.kcal * factor(e, e.qty); }
 function entryProt(e) { return (e.protein || 0) * factor(e, e.qty); }
+function entryVal(e, k) { return (e[k] || 0) * factor(e, e.qty); }
 function qtyLabel(x, qty) {
   if (isGram(x)) return `${fmt(qty)} ג׳`;
   return qty === 1 ? 'יחידה' : `${fmt1(qty)} יח׳`;
@@ -115,7 +130,9 @@ function perLabel(p) {
 function dayEntries(k) { return S.log[k] || (S.log[k] = []); }
 function dayTotals(k) {
   const es = S.log[k] || [];
-  return es.reduce((a, e) => ({ kcal: a.kcal + entryKcal(e), protein: a.protein + entryProt(e) }), { kcal: 0, protein: 0 });
+  const t = {};
+  NUTR.forEach(({ k }) => { t[k] = es.reduce((a, e) => a + entryVal(e, k), 0); });
+  return t;
 }
 function initial(name) { return esc((name || '?').trim().charAt(0) || '?'); }
 function photoStyle(url) { return url ? ` style="background-image:url('${url}')"` : ''; }
@@ -144,19 +161,20 @@ function addProduct(p, qty = p.defaultQty || (isGram(p) ? 100 : 1), k = day) {
     toast(`${p.name} · עכשיו ${qtyLabel(same, same.qty)}`, true);
     return same;
   }
-  const e = { id: uid(), pid: p.id, name: p.name, mode: p.mode, kcal: p.kcal, protein: p.protein || 0, qty, t: Date.now() };
+  const e = { ...pickN(p), id: uid(), pid: p.id, name: p.name, mode: p.mode, kcal: p.kcal, protein: p.protein || 0, qty, t: Date.now() };
   dayEntries(k).push(e);
   save();
   lastAdded = { k, id: e.id, pid: p.id };
   toast(`נוסף: ${p.name} · ${fmt(entryKcal(e))} קק״ל`, true);
   return e;
 }
-function addOneOff({ name, kcal, protein }, k = day) {
-  const e = { id: uid(), pid: null, name: name || 'אוכל', mode: 'u', kcal, protein: protein || 0, qty: 1, t: Date.now() };
+function addOneOff(v, k = day) {
+  const e = { ...pickN(v), id: uid(), pid: null, name: v.name || 'אוכל', mode: v.mode || 'u', qty: v.qty || 1, t: Date.now() };
+  e.protein = e.protein || 0;
   dayEntries(k).push(e);
   save();
   lastAdded = { k, id: e.id, pid: null };
-  toast(`נוסף: ${e.name} · ${fmt(kcal)} קק״ל`, true);
+  toast(`נוסף: ${e.name} · ${fmt(entryKcal(e))} קק״ל`, true);
 }
 function undo() {
   if (!lastAdded) return;
@@ -261,6 +279,9 @@ function viewToday() {
         <div class="stat">
           <div class="row"><span>חלבון</span><span><b>${fmt(t.protein)}</b> / ${fmt(g.protein)} ג׳</span></div>
           <div class="pbar green"><i style="width:${protPct}%"></i></div>
+        </div>
+        <div class="macros">
+          <span>פחמ׳ <b>${fmt(t.carbs)}</b></span><span>שומן <b>${fmt(t.fat)}</b></span><span>סוכר <b>${fmt(t.sugar)}</b></span>
         </div>
       </div>
     </div>
@@ -566,11 +587,13 @@ let addedInSheet = {};
 function openAdd(mode) {
   addMode = mode || (S.products.length ? 'mine' : 'once');
   addedInSheet = {};
+  scanState = null;
   sheet({
     title: day === todayKey() ? 'מה אכלת?' : `הוספה ל${dayLabel(day)}`,
     body: `
       <div class="seg" id="addseg">
-        <button data-mode="mine">מהמוצרים שלי</button>
+        <button data-mode="mine">המוצרים שלי</button>
+        <button data-mode="scan">סריקת תווית</button>
         <button data-mode="once">חד־פעמי</button>
       </div>
       <div id="addbody"></div>`,
@@ -579,8 +602,13 @@ function openAdd(mode) {
       $('#addseg', el).addEventListener('click', e => { const b = e.target.closest('button'); if (b) { addMode = b.dataset.mode; drawAdd(); } });
       drawAdd();
     },
-    refresh: () => drawAdd(true),
+    refresh: () => { if (addMode !== 'scan') drawAdd(true); else drawAddCount(); },
   });
+}
+function drawAddCount() {
+  const el = openSheet && openSheet.el; if (!el) return;
+  const n = Object.values(addedInSheet).reduce((a, b) => a + b, 0);
+  $('#donebtn', el).textContent = n ? `סיום · נוספו ${n}` : 'סיום';
 }
 function drawAdd(keepSearch) {
   const el = openSheet && openSheet.el; if (!el) return;
@@ -598,6 +626,8 @@ function drawAdd(keepSearch) {
     const draw = () => { $('#alist', el).innerHTML = addList(inp.value.trim()); };
     inp.addEventListener('input', draw);
     draw();
+  } else if (addMode === 'scan') {
+    drawScan(body);
   } else {
     body.innerHTML = onceForm();
     const f = $('#onceform', el);
@@ -656,6 +686,168 @@ function submitOnce(f) {
   render();
 }
 
+/* ---------- SCAN a nutrition label ---------- */
+let scanState = null; // { phase, progress, msg, photo, vals, found, estimated, grams, name, keep, error }
+const GRAM_CHIPS = [30, 50, 100, 150, 200, 250];
+
+function drawScan(body) {
+  const st = scanState;
+  if (!st || st.phase === 'idle' || st.phase === 'error') {
+    body.innerHTML = `
+      <label class="scanbox">
+        ${I.camera}
+        <b>צלמו את טבלת הערכים התזונתיים</b>
+        <span>בצילום ישר וקרוב, עם תאורה טובה</span>
+        <input type="file" accept="image/*" id="scanfile">
+      </label>
+      ${st && st.error ? `<div class="warn">${esc(st.error)}</div>` : ''}
+      <p class="note" style="text-align:center">נזהה קלוריות, חלבון, פחמימות, סוכרים, שומן, שומן רווי, סיבים ונתרן,
+        ונחשב לפי כמות הגרמים שאכלתם. מה שלא יזוהה — תתבקשו להשלים.</p>
+      <button class="link" style="display:block;margin:6px auto" data-act="scan-manual">אין תמונה? הקלדה ידנית של הטבלה</button>`;
+    $('#scanfile', body).addEventListener('change', ev => runScan(ev.target.files[0]));
+    return;
+  }
+  if (st.phase === 'reading') {
+    body.innerHTML = `
+      <div class="card" style="text-align:center">
+        ${st.photo ? `<div class="scanprev" style="background-image:url('${st.photo}')"></div>` : ''}
+        <div class="note" style="margin:12px 0 8px">${esc(st.msg || 'קורא…')}</div>
+        <div class="pbar"><i style="width:${Math.round(st.progress * 100)}%"></i></div>
+      </div>`;
+    return;
+  }
+  // phase: edit
+  const missing = NUTR.filter(n => st.vals[n.k] == null || st.vals[n.k] === '');
+  const foundN = NUTR.length - missing.length;
+  const ok = KaloriScan.consistent(st.vals);
+  body.innerHTML = `
+    <div class="scanhead">
+      ${st.photo ? `<div class="thumb" style="background-image:url('${st.photo}')"></div>` : ''}
+      <div>
+        <b>${st.manual ? 'הקלדת ערכים ל־100 ג׳' : `זוהו ${foundN} מתוך ${NUTR.length} ערכים`}</b>
+        <div class="note" id="scanmiss">${missingText(missing)}</div>
+      </div>
+    </div>
+    ${st.full ? `<button class="btn ghost small" style="width:100%;margin-bottom:12px" data-act="scan-photo">${st.showPhoto ? 'הסתרת התמונה' : 'השוואה מול התמונה'}</button>
+      ${st.showPhoto ? `<img class="scanfull" src="${st.full}" alt="">` : ''}` : ''}
+    ${!ok ? `<div class="warn" style="margin:0 0 12px">הקלוריות לא מסתדרות עם החלבון/פחמימות/שומן — כדאי לבדוק שהמספרים נכונים.</div>` : ''}
+    <div class="card">
+      <div class="card-h"><h2>ערכים ל־100 ${st.basisMl ? 'מ״ל' : 'גרם'}</h2><span class="meta">אפשר לתקן</span></div>
+      ${st.manual ? '' : '<p class="note" style="margin:-4px 0 10px">שווה להעיף מבט — לפעמים נקודה עשרונית נבלעת (2.5 נקרא 25).</p>'}
+      <div class="nutgrid" id="nutgrid">
+        ${NUTR.map(n => nutField(n, st)).join('')}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h"><h2>כמה ${st.basisMl ? 'מ״ל' : 'גרם'} אכלת?</h2></div>
+      <input class="input big-in" id="scangrams" inputmode="decimal" value="${st.grams}">
+      <div class="chips" id="gchips" style="margin-top:10px">${GRAM_CHIPS.map(g => `<button type="button" data-v="${g}" class="${Number(st.grams) === g ? 'on' : ''}">${g}</button>`).join('')}</div>
+      <div id="scanres"></div>
+    </div>
+    <div class="card">
+      <label class="field"><span>שם</span><input class="input" id="scanname" placeholder="לא חובה" value="${esc(st.name || '')}"></label>
+      <label class="check" style="margin-bottom:0"><input type="checkbox" id="scankeep" ${st.keep ? 'checked' : ''}> לשמור במוצרים שלי (לפי 100 גרם)</label>
+    </div>
+    <button class="btn" id="scanadd">${I.plus} הוספה ליומן</button>
+    <button class="link" style="display:block;margin:14px auto 0" data-act="scan-again">צילום מחדש</button>`;
+
+  const grid = $('#nutgrid', body);
+  grid.addEventListener('input', ev => {
+    const k = ev.target.name; if (!k) return;
+    st.vals[k] = ev.target.value === '' ? null : num(ev.target.value);
+    ev.target.closest('.nf').classList.toggle('miss', st.vals[k] == null);
+    ev.target.closest('.nf').classList.remove('auto');
+    const miss = NUTR.filter(n => st.vals[n.k] == null);
+    $('#scanmiss', body).innerHTML = missingText(miss);
+    drawScanResult(body);
+  });
+  const g = $('#scangrams', body);
+  g.addEventListener('input', () => { st.grams = g.value; body.querySelectorAll('#gchips button').forEach(b => b.classList.toggle('on', Number(b.dataset.v) === num(g.value))); drawScanResult(body); });
+  $('#gchips', body).addEventListener('click', ev => { const b = ev.target.closest('button'); if (!b) return; g.value = st.grams = b.dataset.v; g.dispatchEvent(new Event('input')); });
+  $('#scanname', body).addEventListener('input', ev => { st.name = ev.target.value; });
+  $('#scankeep', body).addEventListener('change', ev => { st.keep = ev.target.checked; });
+  $('#scanadd', body).addEventListener('click', () => submitScan(body));
+  drawScanResult(body);
+  if (st.vals.kcal == null && !st.manual) setTimeout(() => grid.querySelector('[name=kcal]').focus({ preventScroll: true }), 50);
+}
+function missingText(missing) {
+  if (!missing.length) return 'הכל זוהה — בדקו בעין ואפשר להוסיף';
+  const req = missing.some(n => n.k === 'kcal');
+  return `להשלים: ${missing.map(n => esc(n.l)).join(', ')}${req ? ' <b>(קלוריות חובה)</b>' : ''}`;
+}
+function nutField(n, st) {
+  const v = st.vals[n.k];
+  const cls = v == null ? 'miss' : (n.k === 'kcal' && st.estimated ? 'auto' : '');
+  return `
+    <label class="nf ${cls} ${n.sub ? 'sub' : ''}">
+      <span>${n.l} <small>${n.u}</small></span>
+      <input class="input" name="${n.k}" inputmode="decimal" value="${v == null ? '' : v}" placeholder="להשלים">
+    </label>`;
+}
+function drawScanResult(body) {
+  const st = scanState, f = num(st.grams) / 100, v = st.vals;
+  const r = $('#scanres', body);
+  if (!(f > 0) || v.kcal == null) { r.innerHTML = `<div class="note" style="margin-top:10px">${v.kcal == null ? 'חסרות קלוריות ל־100 גרם' : 'כתבו כמות'}</div>`; $('#scanadd', body).disabled = true; return; }
+  $('#scanadd', body).disabled = false;
+  const cell = (k, l, u, d = 1) => `<div><div class="v">${v[k] == null ? '–' : (d ? fmt1(v[k] * f) : fmt(v[k] * f))}</div><div class="l">${l}${u ? ' ' + u : ''}</div></div>`;
+  r.innerHTML = `
+    <div class="result" style="margin-top:12px">
+      <div class="l">ב־${fmt1(num(st.grams))} ${st.basisMl ? 'מ״ל' : 'גרם'} יש</div>
+      <div class="v" style="font-size:36px">${fmt(v.kcal * f)} <span style="font-size:15px;font-weight:500">קק״ל</span></div>
+      <div class="macgrid">
+        ${cell('protein', 'חלבון', 'ג׳')}${cell('carbs', 'פחמימות', 'ג׳')}${cell('fat', 'שומן', 'ג׳')}
+        ${cell('sugar', 'סוכרים', 'ג׳')}${cell('satFat', 'שומן רווי', 'ג׳')}${cell('fiber', 'סיבים', 'ג׳')}
+      </div>
+      ${v.sodium != null ? `<div class="tiny">נתרן ${fmt(v.sodium * f)} מ״ג</div>` : ''}
+    </div>`;
+}
+async function runScan(file) {
+  if (!file) return;
+  const body = $('#addbody');
+  let photo = '';
+  try { photo = await shrinkImage(file, 320); } catch (e) { /* preview only */ }
+  const full = URL.createObjectURL(file);
+  scanState = { phase: 'reading', progress: 0, msg: 'מכין את הסורק…', photo, full };
+  drawScan(body);
+  let last = 0;
+  try {
+    const r = await KaloriScan.scan(file, (p, msg) => {
+      if (!scanState || scanState.phase !== 'reading') return;
+      scanState.progress = Math.max(scanState.progress, p); scanState.msg = msg;
+      const now = Date.now(); if (now - last < 120) return; last = now;
+      const b = $('#addbody'); if (b && addMode === 'scan') drawScan(b);
+    });
+    if (!scanState) return;
+    const vals = {}; NUTR.forEach(n => { vals[n.k] = r.vals[n.k] != null ? r.vals[n.k] : null; });
+    const anything = Object.values(vals).some(x => x != null);
+    Object.assign(scanState, { phase: 'edit', vals, estimated: r.estimated, basisMl: r.basisMl, grams: 100, keep: false, name: '' });
+    if (!anything) scanState.notice = true;
+  } catch (e) {
+    scanState = { phase: 'error', error: 'לא הצלחתי לקרוא את התמונה. בדקו חיבור לאינטרנט (בסריקה הראשונה מורידים את הסורק) ונסו שוב, או הקלידו ידנית.' };
+  }
+  const b = $('#addbody'); if (b && addMode === 'scan') drawScan(b);
+  if (scanState && scanState.notice) { toast('לא זוהו ערכים — נסו צילום קרוב יותר, או השלימו ידנית'); scanState.notice = false; }
+}
+function submitScan(body) {
+  const st = scanState, v = st.vals, grams = num(st.grams);
+  if (v.kcal == null || !(grams > 0)) return;
+  const per = {}; NUTR.forEach(n => { if (v[n.k] != null) per[n.k] = v[n.k]; });
+  per.protein = per.protein || 0;
+  const name = (st.name || '').trim();
+  if (st.keep) {
+    const p = { ...per, id: uid(), name: name || `מוצר ${S.products.length + 1}`, mode: 'g', defaultQty: grams, photo: st.photo || '', uses: 0 };
+    S.products.push(p);
+    addProduct(p, grams);
+    addedInSheet[p.id] = 1;
+  } else {
+    addOneOff({ ...per, name: name || 'מוצר סרוק', mode: 'g', qty: grams });
+    addedInSheet._once = (addedInSheet._once || 0) + 1;
+  }
+  scanState = null;
+  drawScan(body);
+  drawAddCount();
+}
+
 /* ---------- quantity sheet ---------- */
 function openQty(id) {
   const e = dayEntries(day).find(x => x.id === id);
@@ -675,7 +867,10 @@ function openQty(id) {
     footer: `<button class="btn" id="qsave">שמירה</button>`,
     onMount: el => {
       const inp = $('#qinput', el);
-      const prev = () => { const q = num(inp.value); $('#qprev', el).textContent = q > 0 ? `${fmt(e.kcal * factor(e, q))} קק״ל · ${fmt1((e.protein || 0) * factor(e, q))} ג׳ חלבון` : ''; };
+      const prev = () => {
+        const q = num(inp.value), f = factor(e, q);
+        $('#qprev', el).textContent = q > 0 ? NUTR.filter(n => n.k === 'kcal' || e[n.k]).map(n => `${n.l} ${n.k === 'kcal' || n.k === 'sodium' ? fmt(e[n.k] * f) : fmt1(e[n.k] * f)} ${n.u}`).join(' · ') : '';
+      };
       inp.addEventListener('input', prev); prev();
       $('.chips', el).addEventListener('click', ev => { const b = ev.target.closest('button'); if (b) { inp.value = b.dataset.v; prev(); } });
       $('#qsave', el).addEventListener('click', () => { const q = num(inp.value); if (q > 0) { e.qty = q; save(); } closeSheet(); });
@@ -714,6 +909,13 @@ function openProduct(id) {
           <label class="field"><span id="pqlabel"></span><input class="input" name="defaultQty" inputmode="decimal" value="${p.defaultQty}"></label>
           <p class="note" style="margin:0">זו הכמות שתתווסף בלחיצה אחת. תמיד אפשר לשנות ביומן.</p>
         </div>
+        <details class="card more" ${EXTRA.some(n => p[n.k] != null) ? 'open' : ''}>
+          <summary>פחמימות, שומן ועוד <span class="note">(לא חובה)</span></summary>
+          <div class="nutgrid" style="margin-top:12px">
+            ${EXTRA.map(n => `<label class="nf ${n.sub ? 'sub' : ''}"><span>${n.l} <small>${n.u}</small></span>
+              <input class="input" name="x_${n.k}" inputmode="decimal" value="${p[n.k] == null ? '' : p[n.k]}"></label>`).join('')}
+          </div>
+        </details>
         ${ex ? `<button type="button" class="btn danger" data-act="del-product" data-id="${p.id}">מחיקת המוצר</button>` : ''}
       </form>`,
     footer: `<div class="grid2">
@@ -743,6 +945,8 @@ function openProduct(id) {
         if (!name) { f.name.focus(); toast('חסר שם למוצר'); return; }
         if (!(kcal >= 0) || f.kcal.value === '') { f.kcal.focus(); toast('חסרות קלוריות'); return; }
         Object.assign(p, { name, kcal, protein: num(f.protein.value), defaultQty: num(f.defaultQty.value) || (isGram(p) ? 100 : 1) });
+        EXTRA.forEach(n => { const raw = f['x_' + n.k].value.trim(); if (raw === '') delete p[n.k]; else p[n.k] = num(raw); });
+        if (ex) EXTRA.forEach(n => { if (!(n.k in p)) delete ex[n.k]; });
         if (ex) Object.assign(ex, p); else S.products.push(p);
         save();
         closeSheet();
@@ -828,6 +1032,14 @@ document.addEventListener('click', ev => {
     case 'to-once': {
       addMode = 'once'; drawAdd();
       if (t.dataset.name) $('#onceform [name=name]').value = t.dataset.name;
+      break;
+    }
+    case 'scan-again': scanState = null; drawScan($('#addbody')); break;
+    case 'scan-photo': if (scanState) { scanState.showPhoto = !scanState.showPhoto; drawScan($('#addbody')); } break;
+    case 'scan-manual': {
+      const vals = {}; NUTR.forEach(n => { vals[n.k] = null; });
+      scanState = { phase: 'edit', manual: true, vals, grams: 100, keep: false, name: '' };
+      drawScan($('#addbody'));
       break;
     }
     case 'step': stepEntry(id, Number(t.dataset.n)); break;

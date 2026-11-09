@@ -227,3 +227,34 @@ body.sheet-open .toast { bottom: calc(var(--safe-b) + 90px); }
 .hero p { margin: 0; color: var(--muted); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ---------- macros line & scan ---------- */
+.macros { display: flex; gap: 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.macros b { color: var(--ink); font-weight: 600; }
+.seg button { padding: 0 4px; }
+.scanbox { position: relative; display: grid; justify-items: center; gap: 6px; text-align: center; padding: 34px 16px; border-radius: 22px; background: var(--card); border: 2px dashed #c9d8e5; color: var(--muted); margin-bottom: 12px; }
+.scanbox svg { width: 44px; height: 44px; color: var(--blue); }
+.scanbox b { color: var(--ink); font-size: 17px; }
+.scanbox span { font-size: 13px; }
+.scanbox input { position: absolute; inset: 0; opacity: 0; }
+.scanprev { height: 180px; border-radius: 16px; background: var(--soft) center/cover no-repeat; }
+.scanhead { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+.scanhead .thumb { width: 56px; height: 56px; }
+.nutgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.nf { display: grid; gap: 5px; }
+.nf > span { font-size: 13px; font-weight: 500; }
+.nf small { color: var(--muted); font-weight: 400; }
+.nf.sub > span { color: var(--muted); }
+.nf .input { height: 46px; }
+.nf.miss .input { border-color: #ecc28f; background: var(--orange-soft); }
+.nf.miss > span::after { content: ' · להשלים'; color: var(--orange); font-size: 11px; }
+.nf.auto > span::after { content: ' · חושב'; color: var(--blue); font-size: 11px; }
+.big-in { height: 56px; font-size: 22px !important; font-weight: 600; text-align: center; }
+.macgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 6px; margin-top: 12px; }
+.macgrid .v { font-size: 19px !important; }
+.macgrid .l { font-size: 12px; }
+details.more summary { font-weight: 600; list-style: none; cursor: pointer; }
+details.more summary::-webkit-details-marker { display: none; }
+details.more summary::before { content: '+ '; color: var(--blue); }
+details.more[open] summary::before { content: '− '; }
+.scanfull { width: 100%; border-radius: 16px; margin-bottom: 12px; display: block; }
