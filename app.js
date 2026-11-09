@@ -249,7 +249,7 @@ function viewToday() {
   const t = dayTotals(day);
   const left = g.kcal - t.kcal;
   const pct = Math.min(1, t.kcal / g.kcal);
-  const C = 2 * Math.PI * 54;
+  const R = 104, C = 2 * Math.PI * R;
   const over = left < 0;
   const protPct = Math.min(100, (t.protein / g.protein) * 100);
   const es = [...dayEntries(day)].sort((a, b) => a.t - b.t);
@@ -269,29 +269,38 @@ function viewToday() {
     </div>
   </header>
 
-  <section class="card">
-    <div class="summary">
-      <div class="ring ${over ? 'over' : ''}">
-        <svg viewBox="0 0 132 132"><circle class="track" cx="66" cy="66" r="54"/>
-          <circle class="bar" cx="66" cy="66" r="54" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}"/></svg>
-        <div class="center">
-          <div class="big">${fmt(Math.abs(left))}</div>
-          <div class="lbl">${over ? 'מעל היעד' : 'נשארו'}</div>
-        </div>
+  <section class="card hero-card">
+    <div class="card-h"><h2>${isToday ? 'הקלוריות שלי היום' : 'הקלוריות שלי'}</h2><span class="pill">היעד האישי שלי</span></div>
+    <div class="bigring ${over ? 'over' : ''}">
+      <svg viewBox="0 0 240 240">
+        <circle class="track" cx="120" cy="120" r="${R}"/>
+        <circle class="bar" cx="120" cy="120" r="${R}" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}"/>
+      </svg>
+      <div class="center">
+        <div class="big">${fmt(Math.abs(left))}</div>
+        <div class="lbl">${over ? 'קלוריות מעל היעד' : (isToday ? 'קלוריות נותרו להיום' : 'קלוריות נותרו')}</div>
+        <div class="pct">${fmt(t.kcal / g.kcal * 100)}% מהיעד היומי</div>
       </div>
-      <div class="stats">
-        <div class="stat">
-          <div class="row"><span>קלוריות</span><span><b>${fmt(t.kcal)}</b> / ${fmt(g.kcal)}</span></div>
-          <div class="pbar"><i style="width:${pct * 100}%;${over ? 'background:var(--orange)' : ''}"></i></div>
-        </div>
-        <div class="stat">
-          <div class="row"><span>חלבון</span><span><b>${fmt(t.protein)}</b> / ${fmt(g.protein)} ג׳</span></div>
-          <div class="pbar green"><i style="width:${protPct}%"></i></div>
-        </div>
-        <div class="macros">
-          <span>פחמ׳ <b>${fmt(t.carbs)}</b></span><span>שומן <b>${fmt(t.fat)}</b></span><span>סוכר <b>${fmt(t.sugar)}</b></span>
-        </div>
-      </div>
+    </div>
+    <div class="twostats">
+      <div><b>${fmt(t.kcal)}</b><span>נאכלו</span></div>
+      <div><b>${fmt(g.kcal)}</b><span>יעד יומי</span></div>
+    </div>
+    <button class="btn soft" data-act="open-add" style="margin-top:16px">${I.plus} הוספת מזון</button>
+  </section>
+
+  <section class="card protein-card">
+    <div class="card-h"><h2>${isToday ? 'החלבון שלי היום' : 'החלבון שלי'}</h2><span class="pill">יעד: ${fmt(g.protein)} ג׳</span></div>
+    <div class="pnum"><b>${fmt(t.protein)}</b><span>גרם נאכלו</span></div>
+    <div class="pbar green thick"><i style="width:${protPct}%"></i></div>
+    <div class="prow2">
+      <span>${t.protein >= g.protein ? 'הגעת ליעד החלבון 💪' : `נותרו ${fmt(g.protein - t.protein)} גרם ליעד`}</span>
+      <span>${fmt(t.protein / g.protein * 100)}%</span>
+    </div>
+    <div class="macros big">
+      <div><b>${fmt(t.carbs)}</b><span>פחמימות ג׳</span></div>
+      <div><b>${fmt(t.fat)}</b><span>שומן ג׳</span></div>
+      <div><b>${fmt(t.sugar)}</b><span>סוכר ג׳</span></div>
     </div>
   </section>
 
