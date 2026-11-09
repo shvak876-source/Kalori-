@@ -6,7 +6,8 @@
    The engine (~5MB) is downloaded only on first scan.
    ========================================================= */
 (function (root) {
-  const TESS_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+  // Bundled in vendor/tesseract so label reading also works offline (the service worker keeps it).
+  const TESS_DIR = new URL('vendor/tesseract/', document.baseURI).href;
 
   // Order matters: specific labels are checked before generic ones
   // ("מתוכן סוכרים" before "פחמימות", "שומן רווי" before "שומנים").
@@ -100,8 +101,12 @@
   function getWorker() {
     if (!workerP) {
       workerP = (async () => {
-        if (!root.Tesseract) await loadScript(TESS_URL);
+        if (!root.Tesseract) await loadScript(TESS_DIR + 'tesseract.min.js');
         return root.Tesseract.createWorker(['heb', 'eng'], 1, {
+          workerPath: TESS_DIR + 'worker.min.js',
+          corePath: TESS_DIR + 'tesseract-core-lstm.wasm.js',
+          langPath: TESS_DIR + 'lang',
+          workerBlobURL: false,
           logger: m => progressCb && progressCb(m),
         });
       })().catch(e => { workerP = null; throw e; });

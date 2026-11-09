@@ -906,8 +906,9 @@ async function runScan(file) {
   try {
     let r = null;
     const chain = [];
-    if (getKey('gemini')) chain.push(['Gemini', () => KaloriScan.aiScan(file, getKey('gemini'), prog)]);
-    if (getKey('groq')) chain.push(['Groq', () => KaloriScan.groqScan(file, getKey('groq'), prog)]);
+    if (!navigator.onLine) { /* offline → straight to the on-device reader */ }
+    else if (getKey('gemini')) chain.push(['Gemini', () => KaloriScan.aiScan(file, getKey('gemini'), prog)]);
+    if (navigator.onLine && getKey('groq')) chain.push(['Groq', () => KaloriScan.groqScan(file, getKey('groq'), prog)]);
     const fails = [];
     for (const [name, run] of chain) {
       try { r = await run(); break; }
@@ -915,6 +916,7 @@ async function runScan(file) {
     }
     if (!r) {
       if (fails.length) toast(`${fails.join(' · ')} — עובר לסורק הרגיל`);
+      else if (!navigator.onLine && hasAi()) toast('אין אינטרנט — קורא עם הסורק שבטלפון');
       r = await KaloriScan.scan(file, prog);
     } else if (fails.length) toast(`${fails.join(' · ')} — נסרק עם ${r.source}`);
     if (!scanState) return;
@@ -990,14 +992,19 @@ async function handleBarcode(raw) {
     scanState = null; drawScan(body); drawAddCount();
     return;
   }
-  // 2) look it up in Open Food Facts
+  // 2) offline → can't look it up; offer the label scan (works offline)
+  if (!navigator.onLine) {
+    scanState = { phase: 'idle', barcode: code, error: 'אין אינטרנט, אז אי אפשר לחפש מוצר חדש במאגר.' };
+    return drawScan(body);
+  }
+  // 3) look it up in Open Food Facts
   scanState = { phase: 'reading', progress: 0.5, msg: `מחפש את ${code} במאגר המוצרים…`, barcode: code };
   drawScan(body);
   let r = null;
   try { r = await KaloriScan.lookupBarcode(code); }
   catch (e) {
     if (!scanState || scanState.barcode !== code) return;
-    scanState = { phase: 'idle', barcode: code, error: 'אין חיבור למאגר המוצרים כרגע.' };
+    scanState = { phase: 'idle', barcode: code, error: navigator.onLine ? 'אין חיבור למאגר המוצרים כרגע.' : 'אין אינטרנט, אז אי אפשר לחפש מוצר חדש במאגר.' };
     return drawScan($('#addbody'));
   }
   if (!scanState || scanState.barcode !== code) return;
@@ -1274,6 +1281,22 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden' && cam) { stopCamera(); if (scanState && scanState.phase === 'camera') { scanState = null; const b = $('#addbody'); if (b) drawScan(b); } }
   if (document.visibilityState === 'visible' && tab === 'today' && !openSheet) render();
 });
+
+/* offline indicator */
+function drawOffline() {
+  let el = document.getElementById('offline');
+  if (navigator.onLine) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'offline';
+    el.className = 'offline';
+    el.innerHTML = '<b>📴 אין אינטרנט</b><span>הכל עובד ונשמר. רק חיפוש ברקוד חדש וסריקת AI מחכים לחיבור.</span>';
+    document.body.appendChild(el);
+  }
+}
+window.addEventListener('online', () => { drawOffline(); toast('חזר האינטרנט ✓'); });
+window.addEventListener('offline', drawOffline);
+drawOffline();
 
 render();
 

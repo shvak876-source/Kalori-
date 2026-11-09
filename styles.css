@@ -302,3 +302,10 @@ details.more[open] summary::before { content: '− '; }
 .keybox .steps { margin: 6px 0 10px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ---------- offline banner ---------- */
+.offline { position: fixed; z-index: 30; top: calc(var(--safe-t) + 8px); left: 12px; right: 12px; max-width: 536px; margin: 0 auto;
+  display: grid; gap: 2px; padding: 10px 14px; border-radius: 16px; background: #26221a; border: 1px solid rgba(255,154,77,.35);
+  color: #ffd2ad; font-size: 13px; line-height: 1.5; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.offline b { color: var(--orange); font-size: 14px; }
+body:has(.offline) #view { padding-top: calc(var(--safe-t) + 86px); }
