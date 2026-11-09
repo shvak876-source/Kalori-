@@ -1,5 +1,5 @@
 // Network-first so updates arrive immediately; cache is the offline fallback.
-const CACHE = 'kalori-v2';
+const CACHE = 'kalori-v3';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'scan.js', 'manifest.json', 'icons/icon-180.png', 'icons/icon-192.png'];
 
 self.addEventListener('install', e => {

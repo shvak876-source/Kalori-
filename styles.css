@@ -258,3 +258,4 @@ details.more summary::-webkit-details-marker { display: none; }
 details.more summary::before { content: '+ '; color: var(--blue); }
 details.more[open] summary::before { content: '− '; }
 .scanfull { width: 100%; border-radius: 16px; margin-bottom: 12px; display: block; }
+.steps { margin: 0 0 12px; padding-inline-start: 20px; } .steps li { margin: 2px 0; } .steps a { color: var(--blue); }

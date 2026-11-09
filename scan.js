@@ -155,7 +155,89 @@
     return Object.assign(parse(data.text), { text: data.text });
   }
 
-  const api = { parse, consistent, scan };
+  /* ---------- AI scan (Google Gemini, free tier with the user's own key) ---------- */
+  const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+  const KEYS = ['kcal', 'protein', 'carbs', 'sugar', 'fat', 'satFat', 'fiber', 'sodium'];
+  const PROMPT = `You read nutrition-facts labels (often Hebrew, Israeli format "ערכים תזונתיים").
+Return the values PER 100 g (or per 100 ml for drinks).
+- If the label only gives values per serving/unit, convert to per 100 g using the serving weight; if the weight is unknown, return null for that value.
+- kcal: energy in kilocalories (never kJ).
+- protein, carbs (total carbohydrates), sugar, fat (total), satFat (saturated), fiber: grams.
+- sodium: milligrams. If only salt is given, sodium = salt(g) * 400.
+- Use null for anything not visible or unreadable. Do not guess.
+- name: the product name in the language printed (Hebrew if available), or null.
+- servingGrams: weight of one unit/package/serving in grams if printed, else null.
+- basisMl: true if the table is per 100 ml.`;
+  const nNum = { type: 'NUMBER', nullable: true };
+  const SCHEMA = {
+    type: 'OBJECT',
+    properties: Object.assign({}, ...KEYS.map(k => ({ [k]: nNum })), {
+      name: { type: 'STRING', nullable: true }, servingGrams: nNum, basisMl: { type: 'BOOLEAN' },
+    }),
+  };
+
+  function toJpegBase64(file, max) {
+    return new Promise((res, rej) => {
+      const img = new Image(), url = URL.createObjectURL(file);
+      img.onload = () => {
+        const s = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        res(c.toDataURL('image/jpeg', 0.85).split(',')[1]);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('image')); };
+      img.src = url;
+    });
+  }
+
+  class AiError extends Error { constructor(kind, msg) { super(msg || kind); this.kind = kind; } }
+
+  async function aiScan(file, key, onProgress) {
+    onProgress && onProgress(0.15, 'שולח ל־AI…');
+    const data = await toJpegBase64(file, 1400);
+    onProgress && onProgress(0.35, 'ה־AI קורא את התווית…');
+    const body = JSON.stringify({
+      contents: [{ parts: [{ inline_data: { mime_type: 'image/jpeg', data } }, { text: PROMPT }] }],
+      generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: SCHEMA },
+    });
+    let lastErr;
+    for (const model of GEMINI_MODELS) {
+      let res;
+      try {
+        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body,
+        });
+      } catch (e) { throw new AiError('network'); }
+      if (res.status === 404) { lastErr = new AiError('model'); continue; } // model renamed → try next
+      if (res.status === 429) throw new AiError('quota');
+      if (res.status === 400 || res.status === 401 || res.status === 403) {
+        const t = await res.text();
+        if (/API key|API_KEY|permission|PERMISSION/i.test(t)) throw new AiError('key');
+        lastErr = new AiError('bad', t.slice(0, 200)); continue;
+      }
+      if (!res.ok) { lastErr = new AiError('server'); continue; }
+      const j = await res.json();
+      const txt = j?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+      let o;
+      try { o = JSON.parse(txt); } catch (e) { throw new AiError('parse'); }
+      onProgress && onProgress(1, 'מוכן');
+      const vals = {}, found = {};
+      KEYS.forEach(k => {
+        const v = Number(o[k]);
+        if (o[k] != null && isFinite(v) && v >= 0 && v <= MAX[k]) { vals[k] = Math.round(v * 10) / 10; found[k] = true; }
+      });
+      let estimated = false;
+      if (vals.kcal == null && vals.protein != null && vals.carbs != null && vals.fat != null) {
+        vals.kcal = Math.round(4 * vals.protein + 4 * vals.carbs + 9 * vals.fat); estimated = true;
+      }
+      return { vals, found, estimated, basisMl: !!o.basisMl, name: o.name || '', servingGrams: Number(o.servingGrams) || null, ai: true, model };
+    }
+    throw lastErr || new AiError('server');
+  }
+
+  const api = { parse, consistent, scan, aiScan };
   root.KaloriScan = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

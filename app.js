@@ -44,6 +44,17 @@ function save() {
   catch (e) { toast('האחסון בטלפון מלא — נסו להסיר תמונות ממוצרים'); }
 }
 
+/* AI key lives apart from the data, so it never ends up in a backup file */
+const AI_KEY = 'kalori.aikey';
+function getAiKey() { try { return localStorage.getItem(AI_KEY) || ''; } catch (e) { return ''; } }
+function setAiKey(k) { try { k ? localStorage.setItem(AI_KEY, k) : localStorage.removeItem(AI_KEY); } catch (e) { /* ignore */ } }
+const AI_ERR = {
+  key: 'מפתח ה־AI לא תקין — בדקו אותו בלשונית "יעדים"',
+  quota: 'נגמרה המכסה החינמית של ה־AI לעכשיו',
+  network: 'אין חיבור ל־AI',
+  parse: 'ה־AI החזיר תשובה לא ברורה',
+};
+
 /* ---------- helpers ---------- */
 const $ = (s, r = document) => r.querySelector(s);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -484,6 +495,19 @@ function viewSettings() {
     </div>
   </section>
 
+  <section class="card" id="ai-card">
+    <div class="card-h"><h2>✨ סריקה חכמה (AI)</h2><span class="meta">${getAiKey() ? 'מחובר' : 'לא מחובר'}</span></div>
+    <p class="note" style="margin:0 0 10px">ה־AI של Google ‏(Gemini) קורא תוויות הרבה יותר טוב מהסורק הרגיל — גם בצילום עקום, וגם ממיר לבד מ"למנה" ל־100 גרם. המפתח חינמי:</p>
+    <ol class="note steps">
+      <li>נכנסים ל־<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> עם חשבון Google</li>
+      <li>לוחצים <b>Create API key</b> ומעתיקים</li>
+      <li>מדביקים כאן</li>
+    </ol>
+    <label class="field"><span>מפתח API</span>
+      <input class="input" id="aikey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza…" value="${esc(getAiKey())}"></label>
+    <p class="note" style="margin:0">המפתח נשמר רק בטלפון הזה. בגרסה החינמית יש מגבלת כמות (מספיק בהרבה לשימוש אישי), ו־Google רשאית להשתמש בתמונות לשיפור השירות — אז לצלם רק את התווית.</p>
+  </section>
+
   <section class="card">
     <div class="card-h"><h2>גיבוי</h2></div>
     <p class="note" style="margin:0 0 12px">הנתונים שמורים רק בטלפון הזה. כדאי לשמור גיבוי מדי פעם.</p>
@@ -534,6 +558,11 @@ function bindProfileForm(root, onboarding) {
     };
     ok.addEventListener('input', ov); op.addEventListener('input', ov);
     $('#import').addEventListener('change', importBackup);
+    $('#aikey').addEventListener('change', ev => {
+      setAiKey(ev.target.value.trim());
+      $('#ai-card .meta').textContent = getAiKey() ? 'מחובר' : 'לא מחובר';
+      toast(getAiKey() ? 'הסריקה החכמה הופעלה ✨' : 'הסריקה החכמה כובתה');
+    });
   }
 }
 
@@ -703,6 +732,7 @@ function drawScan(body) {
       ${st && st.error ? `<div class="warn">${esc(st.error)}</div>` : ''}
       <p class="note" style="text-align:center">נזהה קלוריות, חלבון, פחמימות, סוכרים, שומן, שומן רווי, סיבים ונתרן,
         ונחשב לפי כמות הגרמים שאכלתם. מה שלא יזוהה — תתבקשו להשלים.</p>
+      ${getAiKey() ? '<p class="note" style="text-align:center">✨ סריקה חכמה עם AI פעילה</p>' : '<p class="note" style="text-align:center">רוצים זיהוי מדויק הרבה יותר? <button class="link" data-act="goto-ai">חברו AI חינמי</button></p>'}
       <button class="link" style="display:block;margin:6px auto" data-act="scan-manual">אין תמונה? הקלדה ידנית של הטבלה</button>`;
     $('#scanfile', body).addEventListener('change', ev => runScan(ev.target.files[0]));
     return;
@@ -724,7 +754,7 @@ function drawScan(body) {
     <div class="scanhead">
       ${st.photo ? `<div class="thumb" style="background-image:url('${st.photo}')"></div>` : ''}
       <div>
-        <b>${st.manual ? 'הקלדת ערכים ל־100 ג׳' : `זוהו ${foundN} מתוך ${NUTR.length} ערכים`}</b>
+        <b>${st.manual ? 'הקלדת ערכים ל־100 ג׳' : `${st.ai ? '✨ ה־AI זיהה' : 'זוהו'} ${foundN} מתוך ${NUTR.length} ערכים`}</b>
         <div class="note" id="scanmiss">${missingText(missing)}</div>
       </div>
     </div>
@@ -733,13 +763,13 @@ function drawScan(body) {
     ${!ok ? `<div class="warn" style="margin:0 0 12px">הקלוריות לא מסתדרות עם החלבון/פחמימות/שומן — כדאי לבדוק שהמספרים נכונים.</div>` : ''}
     <div class="card">
       <div class="card-h"><h2>ערכים ל־100 ${st.basisMl ? 'מ״ל' : 'גרם'}</h2><span class="meta">אפשר לתקן</span></div>
-      ${st.manual ? '' : '<p class="note" style="margin:-4px 0 10px">שווה להעיף מבט — לפעמים נקודה עשרונית נבלעת (2.5 נקרא 25).</p>'}
+      ${st.manual || st.ai ? '' : '<p class="note" style="margin:-4px 0 10px">שווה להעיף מבט — לפעמים נקודה עשרונית נבלעת (2.5 נקרא 25).</p>'}
       <div class="nutgrid" id="nutgrid">
         ${NUTR.map(n => nutField(n, st)).join('')}
       </div>
     </div>
     <div class="card">
-      <div class="card-h"><h2>כמה ${st.basisMl ? 'מ״ל' : 'גרם'} אכלת?</h2></div>
+      <div class="card-h"><h2>כמה ${st.basisMl ? 'מ״ל' : 'גרם'} אכלת?</h2>${st.serving ? `<span class="meta">יחידה/אריזה: ${fmt(st.serving)}</span>` : ''}</div>
       <input class="input big-in" id="scangrams" inputmode="decimal" value="${st.grams}">
       <div class="chips" id="gchips" style="margin-top:10px">${GRAM_CHIPS.map(g => `<button type="button" data-v="${g}" class="${Number(st.grams) === g ? 'on' : ''}">${g}</button>`).join('')}</div>
       <div id="scanres"></div>
@@ -810,17 +840,28 @@ async function runScan(file) {
   scanState = { phase: 'reading', progress: 0, msg: 'מכין את הסורק…', photo, full };
   drawScan(body);
   let last = 0;
+  const prog = (p, msg) => {
+    if (!scanState || scanState.phase !== 'reading') return;
+    scanState.progress = Math.max(scanState.progress, p); scanState.msg = msg;
+    const now = Date.now(); if (now - last < 120) return; last = now;
+    const b = $('#addbody'); if (b && addMode === 'scan') drawScan(b);
+  };
   try {
-    const r = await KaloriScan.scan(file, (p, msg) => {
-      if (!scanState || scanState.phase !== 'reading') return;
-      scanState.progress = Math.max(scanState.progress, p); scanState.msg = msg;
-      const now = Date.now(); if (now - last < 120) return; last = now;
-      const b = $('#addbody'); if (b && addMode === 'scan') drawScan(b);
-    });
+    let r = null;
+    const key = getAiKey();
+    if (key) {
+      try { r = await KaloriScan.aiScan(file, key, prog); }
+      catch (e) {
+        toast(`${AI_ERR[e.kind] || 'ה־AI לא זמין כרגע'} — עובר לסורק הרגיל`);
+        if (scanState) { scanState.progress = 0; }
+      }
+    }
+    if (!r) r = await KaloriScan.scan(file, prog);
     if (!scanState) return;
     const vals = {}; NUTR.forEach(n => { vals[n.k] = r.vals[n.k] != null ? r.vals[n.k] : null; });
     const anything = Object.values(vals).some(x => x != null);
-    Object.assign(scanState, { phase: 'edit', vals, estimated: r.estimated, basisMl: r.basisMl, grams: 100, keep: false, name: '' });
+    const grams = r.servingGrams && r.servingGrams > 0 && r.servingGrams <= 2000 ? Math.round(r.servingGrams) : 100;
+    Object.assign(scanState, { phase: 'edit', vals, estimated: r.estimated, basisMl: r.basisMl, grams, keep: false, name: r.name || '', ai: !!r.ai, serving: r.servingGrams || null });
     if (!anything) scanState.notice = true;
   } catch (e) {
     scanState = { phase: 'error', error: 'לא הצלחתי לקרוא את התמונה. בדקו חיבור לאינטרנט (בסריקה הראשונה מורידים את הסורק) ונסו שוב, או הקלידו ידנית.' };
@@ -1034,6 +1075,7 @@ document.addEventListener('click', ev => {
       if (t.dataset.name) $('#onceform [name=name]').value = t.dataset.name;
       break;
     }
+    case 'goto-ai': closeSheet(true); tab = 'settings'; render(); setTimeout(() => $('#ai-card').scrollIntoView({ behavior: 'smooth' }), 50); break;
     case 'scan-again': scanState = null; drawScan($('#addbody')); break;
     case 'scan-photo': if (scanState) { scanState.showPhoto = !scanState.showPhoto; drawScan($('#addbody')); } break;
     case 'scan-manual': {
