@@ -343,3 +343,19 @@ details.more[open] summary::before { content: '− '; }
 .tile.pr .ts { color: #8ee8bb; }
 .hmac { display: flex; justify-content: center; gap: 18px; margin-top: 14px; font-size: 13px; color: rgba(255,255,255,.6); }
 .hmac b { color: #fff; font-weight: 600; }
+
+/* ---------- workout card ---------- */
+.wk-card .card-h { align-items: center; }
+.wk-open { color: var(--blue); font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.wk-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.wk-row + .wk-row { border-top: 1px solid var(--line); }
+.wk-ic { width: 44px; height: 44px; border-radius: 14px; background: var(--orange-soft); display: grid; place-items: center; font-size: 22px; flex: 0 0 auto; }
+.wk-info { flex: 1; min-width: 0; }
+.wk-info .sm { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.wk-kc { font-weight: 700; font-size: 18px; text-align: center; color: var(--orange); }
+.wk-kc span { display: block; font-size: 11px; font-weight: 500; color: var(--muted); }
+.wk-foot { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: space-between; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 14px; }
+.wk-prot { color: var(--green); font-weight: 500; }
+.empty-wk { padding: 12px 16px; }
+.empty-wk .wk-ic { background: var(--soft); }
+.wk-hist { margin-top: 4px; color: #b0661c !important; }

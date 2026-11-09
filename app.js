@@ -301,6 +301,8 @@ function viewToday() {
     </div>
   </section>
 
+  ${workoutCard(day, t, g)}
+
   <section class="card">
     <div class="card-h"><h2>הוספה בלחיצה</h2><span class="meta">${S.products.length ? 'הנפוצים שלך' : ''}</span></div>
     ${quick.length ? `
@@ -348,6 +350,42 @@ function entryRow(e) {
   </div>`;
 }
 
+/* ---------- WORKOUT (read from the workout app) ---------- */
+function workoutCard(k, t, g) {
+  const W = window.KaloriWorkouts; if (!W) return '';
+  const list = W.onDay(k, S.profile && S.profile.weight);
+  const isToday = k === todayKey();
+  const burn = list.reduce((a, w) => a + w.kcal, 0);
+  const protLeft = Math.round(g.protein - t.protein);
+  const open = `<a class="wk-open" href="${esc(W.appUrl())}">יומן האימון ↗</a>`;
+  if (!list.length) {
+    return `
+    <section class="card wk-card empty-wk">
+      <div class="wk-row">
+        <span class="wk-ic">🏋️</span>
+        <div class="wk-info"><b>${isToday ? 'עוד לא התאמנת היום' : 'לא היה אימון ביום הזה'}</b>
+          <div class="sm">${W.connected() ? 'אימון שתסיים ביומן יופיע כאן' : 'אימונים מיומן האימון יופיעו כאן'}</div></div>
+        ${open}
+      </div>
+    </section>`;
+  }
+  return `
+  <section class="card wk-card">
+    <div class="card-h"><h2>${isToday ? 'האימון של היום' : 'האימון'}</h2>${open}</div>
+    ${list.map(w => `
+      <div class="wk-row">
+        <span class="wk-ic">${w.icon}</span>
+        <div class="wk-info"><b>${esc(w.title)}</b><div class="sm">${esc(w.detail)}</div></div>
+        <div class="wk-kc">כ־${fmt(w.kcal)}<span>קק״ל</span></div>
+      </div>`).join('')}
+    <div class="wk-foot">
+      <span>🔥 נשרפו בערך <b>${fmt(burn)}</b> קק״ל</span>
+      ${isToday && protLeft > 0 ? `<span class="wk-prot">💪 עוד ${fmt(protLeft)} ג׳ חלבון ליעד</span>` : ''}
+    </div>
+    <p class="note" style="margin:8px 0 0">הערכה בלבד, ולא נוספת ליעד: היעד שלך כבר מחושב לפי רמת הפעילות.</p>
+  </section>`;
+}
+
 /* ---------- PRODUCTS ---------- */
 let productQuery = '';
 function viewProducts() {
@@ -380,7 +418,8 @@ function bindProductSearch() {
 /* ---------- HISTORY ---------- */
 function viewHistory() {
   const g = goals();
-  const keys = Object.keys(S.log).filter(k => (S.log[k] || []).length).sort().reverse();
+  const wkDays = window.KaloriWorkouts ? KaloriWorkouts.all().map(x => todayKey(new Date(x.s.date))) : [];
+  const keys = [...new Set([...Object.keys(S.log).filter(k => (S.log[k] || []).length), ...wkDays])].sort().reverse();
   const last7 = [];
   for (let i = 1; i <= 7; i++) { const k = shiftDay(todayKey(), -i); if ((S.log[k] || []).length) last7.push(dayTotals(k)); }
   const avg = last7.length ? last7.reduce((a, t) => ({ kcal: a.kcal + t.kcal, protein: a.protein + t.protein }), { kcal: 0, protein: 0 }) : null;
@@ -397,6 +436,11 @@ function viewHistory() {
   </section>` : ''}
   ${keys.length ? keys.slice(0, 90).map(k => historyDay(k, g)).join('') : `<div class="card empty">עוד אין היסטוריה. ברגע שתוסיפו אוכל — הימים יופיעו כאן.</div>`}`;
 }
+function histWorkouts(k) {
+  const W = window.KaloriWorkouts; if (!W) return '';
+  const list = W.onDay(k, S.profile && S.profile.weight);
+  return list.length ? `<div class="sm wk-hist">${list.map(w => `${w.icon} ${esc(w.title)} · כ־${fmt(w.kcal)} קק״ל`).join('<br>')}</div>` : '';
+}
 function historyDay(k, g) {
   const t = dayTotals(k);
   const ok = t.kcal <= g.kcal;
@@ -407,14 +451,15 @@ function historyDay(k, g) {
     <button class="hday" data-act="hist-toggle" data-k="${k}">
       <div class="row">
         <div><div class="d">${esc(dayLabel(k) === 'היום' || dayLabel(k) === 'אתמול' ? dayLabel(k) + ' · ' + longDate(k) : longDate(k))}</div>
-          <div class="sm">${fmt(t.protein)} ג׳ חלבון · ${S.log[k].length} פריטים</div></div>
+          <div class="sm">${fmt(t.protein)} ג׳ חלבון · ${(S.log[k] || []).length} פריטים</div>
+          ${histWorkouts(k)}</div>
         <div class="k ${ok ? 'ok' : 'over'}">${fmt(t.kcal)} <span class="sm">/ ${fmt(g.kcal)}</span></div>
       </div>
       <div class="pbar"><i style="width:${Math.min(100, t.kcal / g.kcal * 100)}%;background:${ok ? 'var(--green)' : 'var(--orange)'}"></i></div>
     </button>
     ${open ? `
     <div class="hentries">
-      ${S.log[k].map(e => `
+      ${(S.log[k] || []).map(e => `
         <div class="prow">
           <div class="info"><div class="nm">${esc(e.name)}</div>
             <div class="sm">${esc(qtyLabel(e, e.qty))} · ${fmt(entryKcal(e))} קק״ל${e.protein ? ` · ${fmt1(entryProt(e))} ג׳ חלבון` : ''}</div></div>
