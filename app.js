@@ -249,7 +249,7 @@ function viewToday() {
   const t = dayTotals(day);
   const left = g.kcal - t.kcal;
   const pct = Math.min(1, t.kcal / g.kcal);
-  const R = 104, C = 2 * Math.PI * R;
+  const R = 108, C = 2 * Math.PI * R, R2 = 88, C2 = 2 * Math.PI * R2;
   const over = left < 0;
   const protPct = Math.min(100, (t.protein / g.protein) * 100);
   const es = [...dayEntries(day)].sort((a, b) => a.t - b.t);
@@ -269,38 +269,35 @@ function viewToday() {
     </div>
   </header>
 
-  <section class="card hero-card">
-    <div class="card-h"><h2>${isToday ? 'הקלוריות שלי היום' : 'הקלוריות שלי'}</h2><span class="pill">היעד האישי שלי</span></div>
-    <div class="bigring ${over ? 'over' : ''}">
+  <section class="hero ${over ? 'over' : ''}">
+    <div class="rings">
       <svg viewBox="0 0 240 240">
-        <circle class="track" cx="120" cy="120" r="${R}"/>
-        <circle class="bar" cx="120" cy="120" r="${R}" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}"/>
+        <circle class="t1" cx="120" cy="120" r="${R}"/>
+        <circle class="b1" cx="120" cy="120" r="${R}" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}"/>
+        <circle class="t2" cx="120" cy="120" r="${R2}"/>
+        <circle class="b2" cx="120" cy="120" r="${R2}" stroke-dasharray="${C2}" stroke-dashoffset="${C2 * (1 - protPct / 100)}"/>
       </svg>
       <div class="center">
         <div class="big">${fmt(Math.abs(left))}</div>
-        <div class="lbl">${over ? 'קלוריות מעל היעד' : (isToday ? 'קלוריות נותרו להיום' : 'קלוריות נותרו')}</div>
-        <div class="pct">${fmt(t.kcal / g.kcal * 100)}% מהיעד היומי</div>
+        <div class="lbl">${over ? 'קק״ל מעל היעד' : 'קק״ל נשארו'}</div>
       </div>
     </div>
-    <div class="twostats">
-      <div><b>${fmt(t.kcal)}</b><span>נאכלו</span></div>
-      <div><b>${fmt(g.kcal)}</b><span>יעד יומי</span></div>
-    </div>
-    <button class="btn soft" data-act="open-add" style="margin-top:16px">${I.plus} הוספת מזון</button>
-  </section>
 
-  <section class="card protein-card">
-    <div class="card-h"><h2>${isToday ? 'החלבון שלי היום' : 'החלבון שלי'}</h2><span class="pill">יעד: ${fmt(g.protein)} ג׳</span></div>
-    <div class="pnum"><b>${fmt(t.protein)}</b><span>גרם נאכלו</span></div>
-    <div class="pbar green thick"><i style="width:${protPct}%"></i></div>
-    <div class="prow2">
-      <span>${t.protein >= g.protein ? 'הגעת ליעד החלבון 💪' : `נותרו ${fmt(g.protein - t.protein)} גרם ליעד`}</span>
-      <span>${fmt(t.protein / g.protein * 100)}%</span>
+    <div class="tiles">
+      <div class="tile kc">
+        <div class="th"><i></i>קלוריות</div>
+        <div class="tv"><b>${fmt(t.kcal)}</b><span>/ ${fmt(g.kcal)}</span></div>
+        <div class="ts">${fmt(t.kcal / g.kcal * 100)}% מהיעד</div>
+      </div>
+      <div class="tile pr">
+        <div class="th"><i></i>חלבון</div>
+        <div class="tv"><b>${fmt(t.protein)}</b><span>/ ${fmt(g.protein)} ג׳</span></div>
+        <div class="ts">${t.protein >= g.protein ? 'הגעת ליעד 💪' : `עוד ${fmt(g.protein - t.protein)} ג׳`}</div>
+      </div>
     </div>
-    <div class="macros big">
-      <div><b>${fmt(t.carbs)}</b><span>פחמימות ג׳</span></div>
-      <div><b>${fmt(t.fat)}</b><span>שומן ג׳</span></div>
-      <div><b>${fmt(t.sugar)}</b><span>סוכר ג׳</span></div>
+
+    <div class="hmac">
+      <span>פחמימות <b>${fmt(t.carbs)}</b></span><span>שומן <b>${fmt(t.fat)}</b></span><span>סוכר <b>${fmt(t.sugar)}</b></span>
     </div>
   </section>
 
@@ -749,7 +746,7 @@ function drawScan(body) {
   if (!st || st.phase === 'idle' || st.phase === 'error') {
     const bc = st && st.barcode;
     body.innerHTML = `
-      ${bc ? `<div class="info">${st.error ? esc(st.error) : `ברקוד <b dir="ltr">${esc(bc)}</b> לא נמצא במאגר${st.pendingName ? ` (או שחסרים בו ערכים)` : ''}.`}
+      ${bc ? `<div class="notice">${st.error ? esc(st.error) : `ברקוד <b dir="ltr">${esc(bc)}</b> לא נמצא במאגר${st.pendingName ? ` (או שחסרים בו ערכים)` : ''}.`}
         <br><b>צלמו את התווית פעם אחת</b> — והמוצר יישמר עם הברקוד, כך שבפעם הבאה זה מיידי.</div>` : ''}
       ${!bc && st && st.error ? `<div class="warn" style="margin:0 0 12px">${esc(st.error)}</div>` : ''}
       <div class="scanopts">
