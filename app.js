@@ -834,7 +834,7 @@ function drawScan(body) {
     body.innerHTML = `
       <div class="card" style="text-align:center">
         ${st.photo ? `<div class="scanprev" style="background-image:url('${st.photo}')"></div>` : ''}
-        <div class="note" style="margin:12px 0 8px">${esc(st.msg || 'קורא…')}</div>
+        <div class="note" style="margin:12px 0 8px">${esc(st.msg || 'קורא…')} <b id="scansec" class="secs">${st.t0 ? ((performance.now() - st.t0) / 1000).toFixed(1) + ' שנ׳' : ''}</b></div>
         <div class="pbar"><i style="width:${Math.round(st.progress * 100)}%"></i></div>
       </div>
       <button class="link" style="display:block;margin:10px auto 0" data-act="scan-again">ביטול</button>`;
@@ -850,6 +850,7 @@ function drawScan(body) {
       <div>
         <b>${st.manual ? 'הקלדת ערכים ל־100 ג׳' : st.source === 'off' ? `נמצא במאגר · ${foundN} מתוך ${NUTR.length} ערכים` : `${st.ai ? `✨ ${esc(st.aiName || 'ה־AI')} זיהה` : 'זוהו'} ${foundN} מתוך ${NUTR.length} ערכים`}</b>
         <div class="note" id="scanmiss">${missingText(missing)}</div>
+        ${st.took ? `<div class="timing">⏱ ${(st.took / 1000).toFixed(1)} שנ׳ · ${(st.timing || []).map(([n, ms, ok, why]) => `${esc(n)} ${ok ? '' : '✗ '}${(ms / 1000).toFixed(1)}${why ? ` (${esc(why)})` : ''}`).join(' · ')}</div>` : ''}
       </div>
     </div>
     ${st.full ? `<button class="btn ghost small" style="width:100%;margin-bottom:12px" data-act="scan-photo">${st.showPhoto ? 'הסתרת התמונה' : 'השוואה מול התמונה'}</button>
@@ -930,11 +931,24 @@ async function runScan(file) {
   if (!file) return;
   const body = $('#addbody');
   const prevSt = scanState || {};
-  let photo = '';
-  try { photo = await shrinkImage(file, 320); } catch (e) { /* preview only */ }
+  const t0 = performance.now();
+  const sec = ms => (ms / 1000).toFixed(1);
   const full = URL.createObjectURL(file);
-  scanState = { phase: 'reading', progress: 0, msg: 'מכין את הסורק…', photo, full, barcode: prevSt.barcode || null };
+  scanState = { phase: 'reading', progress: 0.05, msg: 'מכין את התמונה…', photo: '', full, barcode: prevSt.barcode || null, t0, timing: [] };
   drawScan(body);
+  const st0 = scanState;
+  const ticker = setInterval(() => { // live seconds counter
+    if (scanState !== st0 || st0.phase !== 'reading') return clearInterval(ticker);
+    const el = document.getElementById('scansec'); if (el) el.textContent = sec(performance.now() - t0) + ' שנ׳';
+  }, 200);
+  // the small preview and the AI image are made once, in parallel
+  const [photo, aiData] = await Promise.all([
+    shrinkImage(file, 320).catch(() => ''),
+    hasAi() ? KaloriScan.toJpegBase64(file, 1100).catch(() => null) : Promise.resolve(null),
+  ]);
+  if (scanState !== st0) return;
+  st0.photo = photo;
+  st0.timing.push(['הכנת תמונה', performance.now() - t0, true]);
   let last = 0;
   const prog = (p, msg) => {
     if (!scanState || scanState.phase !== 'reading') return;
@@ -944,29 +958,45 @@ async function runScan(file) {
   };
   try {
     let r = null;
-    // Always try the AI (the phone's online/offline flag is not reliable); a real
-    // network failure comes back fast and we fall through to the on-device reader.
-    const chain = [];
-    if (getKey('gemini')) chain.push(['Gemini', () => KaloriScan.aiScan(file, getKey('gemini'), prog)]);
-    if (getKey('groq')) chain.push(['Groq', () => KaloriScan.groqScan(file, getKey('groq'), prog)]);
+    // Gemini and Groq run at the same time; the first good answer wins and the other is cancelled.
+    // (The phone's online/offline flag is not reliable, so the AI is always tried.)
+    const services = [];
+    if (getKey('gemini')) services.push(['Gemini', s => KaloriScan.aiScan(file, getKey('gemini'), null, s, aiData)]);
+    if (getKey('groq')) services.push(['Groq', s => KaloriScan.groqScan(file, getKey('groq'), null, s, aiData)]);
     const fails = [];
-    for (const [name, run] of chain) {
-      try { r = await run(); setOnline(true); break; }
-      catch (e) {
-        fails.push(`${name}: ${AI_ERR[e.kind] || 'לא זמין'}`);
-        if (e.kind === 'network') checkOnline();
-        if (scanState) scanState.progress = 0;
-      }
+    if (services.length) {
+      prog(0.3, `שולח ל־${services.map(x => x[0]).join(' ול־')}…`);
+      const ctrl = new AbortController();
+      const tAi = performance.now();
+      try {
+        r = await Promise.any(services.map(([name, run]) => run(ctrl.signal).then(
+          res => { st0.timing.push([name, performance.now() - tAi, true]); return res; },
+          e => {
+            if (e.kind !== 'cancelled') {
+              st0.timing.push([name, performance.now() - tAi, false, AI_ERR[e.kind] || 'לא זמין']);
+              fails.push(`${name}: ${AI_ERR[e.kind] || 'לא זמין'}`);
+              if (e.kind === 'network') checkOnline();
+            }
+            throw e;
+          })));
+        ctrl.abort(); // stop the slower one
+        setOnline(true);
+      } catch (e) { r = null; }
     }
+    if (scanState !== st0) return;
     if (!r) {
-      if (fails.length) toast(`${fails.join(' · ')} — עובר לסורק שבטלפון (איטי יותר). אפשר לבדוק את המפתחות בלשונית "יעדים".`);
+      if (fails.length) toast(`${fails.join(' · ')} — קורא עם הסורק שבטלפון (איטי יותר). אפשר לבדוק את המפתחות בלשונית "יעדים".`);
+      st0.progress = 0.05;
+      const tO = performance.now();
       r = await KaloriScan.scan(file, prog);
-    } else if (fails.length) toast(`${fails.join(' · ')} — נסרק עם ${r.source}`);
+      st0.timing.push(['סורק בטלפון', performance.now() - tO, true]);
+    }
     if (!scanState) return;
     const vals = {}; NUTR.forEach(n => { vals[n.k] = r.vals[n.k] != null ? r.vals[n.k] : null; });
     const anything = Object.values(vals).some(x => x != null);
     const grams = r.servingGrams && r.servingGrams > 0 && r.servingGrams <= 2000 ? Math.round(r.servingGrams) : 100;
-    Object.assign(scanState, { phase: 'edit', vals, estimated: r.estimated, basisMl: r.basisMl, grams, keep: !!prevSt.barcode, name: r.name || prevSt.pendingName || '', ai: !!r.ai, aiName: r.source, serving: r.servingGrams || null });
+    Object.assign(scanState, { phase: 'edit', vals, estimated: r.estimated, basisMl: r.basisMl, grams, keep: !!prevSt.barcode, name: r.name || prevSt.pendingName || '', ai: !!r.ai, aiName: r.source, serving: r.servingGrams || null,
+      took: performance.now() - t0 });
     if (!anything) scanState.notice = true;
   } catch (e) {
     scanState = { phase: 'error', error: 'לא הצלחתי לקרוא את התמונה. בדקו חיבור לאינטרנט (בסריקה הראשונה מורידים את הסורק) ונסו שוב, או הקלידו ידנית.' };

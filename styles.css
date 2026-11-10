@@ -316,3 +316,5 @@ body:has(.offline) #view { padding-top: calc(var(--safe-t) + 86px); }
 .keystate.ok { color: var(--lime); }
 .keystate.err { color: #ffb37a; }
 .keystate .link { font-size: 13px; margin-inline-start: 6px; }
+.secs { color: var(--lime); font-variant-numeric: tabular-nums; }
+.timing { font-size: 12px; color: var(--muted); margin-top: 3px; }

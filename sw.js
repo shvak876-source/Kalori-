@@ -3,7 +3,7 @@
 // - Label reader (≈7MB): saved in the background after install, so it also works offline.
 // - Google Fonts: cached the first time they load.
 // - Product database / AI requests are never cached (they need the internet).
-const VERSION = 'kalori-v13';
+const VERSION = 'kalori-v14';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'scan.js', 'manifest.json',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'vendor/barcode.js', 'vendor/zxing_reader.wasm'];
 const OCR = ['vendor/tesseract/tesseract.min.js', 'vendor/tesseract/worker.min.js', 'vendor/tesseract/tesseract-core-lstm.wasm.js',

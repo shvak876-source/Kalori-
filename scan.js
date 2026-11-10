@@ -102,6 +102,7 @@
     if (!workerP) {
       workerP = (async () => {
         if (!root.Tesseract) await loadScript(TESS_DIR + 'tesseract.min.js');
+        // Hebrew + English: the English model reads the digits much more reliably
         return root.Tesseract.createWorker(['heb', 'eng'], 1, {
           workerPath: TESS_DIR + 'worker.min.js',
           corePath: TESS_DIR + 'tesseract-core-lstm.wasm.js',
@@ -120,7 +121,7 @@
       const img = new Image();
       const url = URL.createObjectURL(file);
       img.onload = () => {
-        const s = Math.min(2, 1800 / Math.max(img.width, img.height));
+        const s = Math.min(2, 1400 / Math.max(img.width, img.height));
         const c = document.createElement('canvas');
         c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
         const ctx = c.getContext('2d');
@@ -209,12 +210,17 @@ Return the values PER 100 g (or per 100 ml for drinks).
     return msg;
   }
   /* fetch with a time limit, so a slow service never blocks the scan */
-  async function timedFetch(url, opts, ms) {
+  async function timedFetch(url, opts, ms, outer) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), ms);
+    const stop = () => ctrl.abort();
+    if (outer) { if (outer.aborted) ctrl.abort(); else outer.addEventListener('abort', stop); }
     try { return await fetch(url, Object.assign({}, opts, { signal: ctrl.signal })); }
-    catch (e) { throw new AiError(e && e.name === 'AbortError' ? 'timeout' : 'network'); }
-    finally { clearTimeout(t); }
+    catch (e) {
+      if (outer && outer.aborted) throw new AiError('cancelled');
+      throw new AiError(e && e.name === 'AbortError' ? 'timeout' : 'network');
+    }
+    finally { clearTimeout(t); if (outer) outer.removeEventListener('abort', stop); }
   }
   const AI_TIMEOUT = 15000, LIST_TIMEOUT = 8000;
 
@@ -266,7 +272,7 @@ Return the values PER 100 g (or per 100 ml for drinks).
     return modelCache.g.list;
   }
 
-  async function geminiCall(key, parts, json) {
+  async function geminiCall(key, parts, json, signal) {
     key = cleanKey(key);
     if (!key) throw new AiError('key', 'אין מפתח');
     const models = await geminiModels(key);
@@ -283,10 +289,10 @@ Return the values PER 100 g (or per 100 ml for drinks).
     for (const model of models.slice(0, 4)) {
       const url = `${GEMINI}models/${model}:generateContent`, headers = { 'Content-Type': 'application/json', 'x-goog-api-key': key };
       const plain = ((memGet('g', key) || {}).plain || []).includes(model); // known not to accept the thinking setting
-      let res = await timedFetch(url, { method: 'POST', headers, body: bodyFor(model, !plain) }, AI_TIMEOUT);
+      let res = await timedFetch(url, { method: 'POST', headers, body: bodyFor(model, !plain) }, AI_TIMEOUT, signal);
       if (!plain && res.status === 400 && /thinking/i.test(await errorFrom(res))) { // → once more without it, and remember
         memSet('g', key, { plain: [...((memGet('g', key) || {}).plain || []), model] });
-        res = await timedFetch(url, { method: 'POST', headers, body: bodyFor(model, false) }, AI_TIMEOUT);
+        res = await timedFetch(url, { method: 'POST', headers, body: bodyFor(model, false) }, AI_TIMEOUT, signal);
       }
       if (res.ok) {
         const j = await res.json();
@@ -302,11 +308,11 @@ Return the values PER 100 g (or per 100 ml for drinks).
     throw errs.find(e => e.kind === 'quota') || errs[0] || new AiError('model');
   }
 
-  async function aiScan(file, key, onProgress) {
+  async function aiScan(file, key, onProgress, signal, data) {
     onProgress && onProgress(0.15, 'שולח ל־AI (Gemini)…');
-    const data = await toJpegBase64(file, 1100);
+    data = data || await toJpegBase64(file, 1100);
     onProgress && onProgress(0.35, 'ה־AI קורא את התווית…');
-    const { txt } = await geminiCall(key, [{ inline_data: { mime_type: 'image/jpeg', data } }, { text: PROMPT }], true);
+    const { txt } = await geminiCall(key, [{ inline_data: { mime_type: 'image/jpeg', data } }, { text: PROMPT }], true, signal);
     onProgress && onProgress(1, 'מוכן');
     return normalizeAi(parseJson(txt), 'Gemini');
   }
@@ -351,7 +357,7 @@ Return the values PER 100 g (or per 100 ml for drinks).
     return modelCache.q.list;
   }
 
-  async function groqCall(key, content, maxTokens) {
+  async function groqCall(key, content, maxTokens, signal) {
     key = cleanKey(key);
     if (!key) throw new AiError('key', 'אין מפתח');
     const models = await groqModels(key);
@@ -364,9 +370,9 @@ Return the values PER 100 g (or per 100 ml for drinks).
         return JSON.stringify(b);
       };
       const opts = b => ({ method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: b });
-      let res = await timedFetch(`${GROQ}chat/completions`, opts(bodyFor(true)), AI_TIMEOUT);
+      let res = await timedFetch(`${GROQ}chat/completions`, opts(bodyFor(true)), AI_TIMEOUT, signal);
       if (res.status === 400 && /reasoning/i.test(await errorFrom(res)))
-        res = await timedFetch(`${GROQ}chat/completions`, opts(bodyFor(false)), AI_TIMEOUT);
+        res = await timedFetch(`${GROQ}chat/completions`, opts(bodyFor(false)), AI_TIMEOUT, signal);
       if (res.ok) { const j = await res.json(); memSet('q', key, { last: model }); return { txt: j?.choices?.[0]?.message?.content || '', model }; }
       const msg = await errorFrom(res);
       if (res.status === 401 || res.status === 403) throw new AiError('key', msg, res.status);
@@ -376,14 +382,14 @@ Return the values PER 100 g (or per 100 ml for drinks).
     throw errs.find(e => e.kind === 'quota') || errs[0] || new AiError('model');
   }
 
-  async function groqScan(file, key, onProgress) {
+  async function groqScan(file, key, onProgress, signal, data) {
     onProgress && onProgress(0.15, 'שולח ל־AI (Groq)…');
-    const data = await toJpegBase64(file, 1100);
+    data = data || await toJpegBase64(file, 1100);
     onProgress && onProgress(0.35, 'ה־AI קורא את התווית…');
     const { txt } = await groqCall(key, [
       { type: 'text', text: PROMPT + '\nReply with ONLY a single JSON object (no other text) with exactly these keys: ' + KEYS.join(', ') + ', name, servingGrams, basisMl.' },
       { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + data } },
-    ]);
+    ], undefined, signal);
     onProgress && onProgress(1, 'מוכן');
     return normalizeAi(parseJson(txt), 'Groq');
   }
@@ -458,7 +464,7 @@ Return the values PER 100 g (or per 100 ml for drinks).
     return r;
   }
 
-  const api = { parse, consistent, scan, aiScan, groqScan, testKey, warm, cleanKey, detectBarcode, getDetector, lookupBarcode };
+  const api = { parse, consistent, scan, aiScan, groqScan, testKey, warm, toJpegBase64, cleanKey, detectBarcode, getDetector, lookupBarcode };
   root.KaloriScan = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
