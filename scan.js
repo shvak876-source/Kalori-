@@ -189,7 +189,7 @@ Return the values PER 100 g (or per 100 ml for drinks).
         c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
         c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
         URL.revokeObjectURL(url);
-        res(c.toDataURL('image/jpeg', 0.85).split(',')[1]);
+        res(c.toDataURL('image/jpeg', 0.8).split(',')[1]);
       };
       img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('image')); };
       img.src = url;
@@ -201,11 +201,41 @@ Return the values PER 100 g (or per 100 ml for drinks).
     constructor(kind, detail, status) { super(detail || kind); this.kind = kind; this.detail = detail || ''; this.status = status || 0; }
   }
   async function errorFrom(res) {
+    if (res._msg != null) return res._msg; // a body can be read only once
     let msg = '';
     try { const j = await res.clone().json(); msg = (j && j.error && (j.error.message || j.error.status)) || ''; }
-    catch (e) { try { msg = (await res.text()).slice(0, 300); } catch (e2) { /* ignore */ } }
+    catch (e) { try { msg = (await res.clone().text()).slice(0, 300); } catch (e2) { /* ignore */ } }
+    res._msg = msg;
     return msg;
   }
+  /* fetch with a time limit, so a slow service never blocks the scan */
+  async function timedFetch(url, opts, ms) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), ms);
+    try { return await fetch(url, Object.assign({}, opts, { signal: ctrl.signal })); }
+    catch (e) { throw new AiError(e && e.name === 'AbortError' ? 'timeout' : 'network'); }
+    finally { clearTimeout(t); }
+  }
+  const AI_TIMEOUT = 15000, LIST_TIMEOUT = 8000;
+
+  /* remember which models exist and which one answered last time (per key), for a day */
+  const MEM = 'kalori.aimodels';
+  function memGet(svc, key) {
+    try {
+      const m = JSON.parse(localStorage.getItem(MEM) || '{}')[svc];
+      return m && m.key === key.slice(-8) && Date.now() - m.at < 864e5 ? m : null;
+    } catch (e) { return null; }
+  }
+  function memSet(svc, key, patch) {
+    try {
+      const all = JSON.parse(localStorage.getItem(MEM) || '{}');
+      const cur = all[svc] && all[svc].key === key.slice(-8) ? all[svc] : { key: key.slice(-8) };
+      all[svc] = Object.assign(cur, patch, { at: Date.now() });
+      localStorage.setItem(MEM, JSON.stringify(all));
+    } catch (e) { /* ignore */ }
+  }
+  const withLastFirst = (list, last) => last && list.includes(last) ? [last, ...list.filter(x => x !== last)] : list;
+
   // keep only printable ASCII (drops spaces, quotes, line breaks and invisible characters from a pasted key)
   const cleanKey = k => String(k || '').replace(/["'`]/g, '').replace(/[^\x21-\x7E]/g, '');
 
@@ -215,10 +245,10 @@ Return the values PER 100 g (or per 100 ml for drinks).
   const modelCache = {};
 
   async function geminiModels(key) {
-    if (modelCache.g && modelCache.g.key === key) return modelCache.g.list;
-    let res;
-    try { res = await fetch(`${GEMINI}models?pageSize=200`, { headers: { 'x-goog-api-key': key } }); }
-    catch (e) { throw new AiError('network'); }
+    if (modelCache.g && modelCache.g.key === key) return withLastFirst(modelCache.g.list, (memGet('g', key) || {}).last);
+    const mem = memGet('g', key);
+    if (mem && mem.list) { modelCache.g = { key, list: mem.list }; return withLastFirst(mem.list, mem.last); }
+    const res = await timedFetch(`${GEMINI}models?pageSize=200`, { headers: { 'x-goog-api-key': key } }, LIST_TIMEOUT);
     if (!res.ok) {
       const msg = await errorFrom(res);
       if (res.status === 400 || res.status === 401 || res.status === 403) throw new AiError('key', msg, res.status);
@@ -232,6 +262,7 @@ Return the values PER 100 g (or per 100 ml for drinks).
       .sort((a, b) => parseFloat(b.slice(7)) - parseFloat(a.slice(7)));
     const list = [...new Set([...GEMINI_PREFERRED.filter(id => avail.includes(id)), ...flash, ...avail.filter(id => /^gemini-.*flash/.test(id) && !/image|tts|audio|live|embed/.test(id))])];
     modelCache.g = { key, list: list.length ? list : GEMINI_PREFERRED };
+    memSet('g', key, { list: modelCache.g.list });
     return modelCache.g.list;
   }
 
@@ -239,18 +270,28 @@ Return the values PER 100 g (or per 100 ml for drinks).
     key = cleanKey(key);
     if (!key) throw new AiError('key', 'אין מפתח');
     const models = await geminiModels(key);
-    const body = JSON.stringify({
-      contents: [{ parts }],
-      generationConfig: json ? { temperature: 0, responseMimeType: 'application/json', responseSchema: SCHEMA } : { temperature: 0, maxOutputTokens: 20 },
-    });
+    // Reading a label needs no "thinking"; turning it off makes the answer several times faster.
+    // Gemini 2.5 takes thinkingBudget, Gemini 3+ takes thinkingLevel (sending the wrong one is a 400).
+    const thinking = m => /gemini-2\.5/.test(m) ? { thinkingBudget: 0 } : /gemini-2\.0|lite/.test(m) ? null : { thinkingLevel: 'minimal' };
+    const bodyFor = (m, withThinking) => {
+      const gc = json ? { temperature: 0, responseMimeType: 'application/json', responseSchema: SCHEMA, maxOutputTokens: 800 } : { temperature: 0, maxOutputTokens: 20 };
+      const th = withThinking && thinking(m);
+      if (th) gc.thinkingConfig = th;
+      return JSON.stringify({ contents: [{ parts }], generationConfig: gc });
+    };
     const errs = [];
-    for (const model of models.slice(0, 5)) {
-      let res;
-      try { res = await fetch(`${GEMINI}models/${model}:generateContent`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body }); }
-      catch (e) { throw new AiError('network'); }
+    for (const model of models.slice(0, 4)) {
+      const url = `${GEMINI}models/${model}:generateContent`, headers = { 'Content-Type': 'application/json', 'x-goog-api-key': key };
+      const plain = ((memGet('g', key) || {}).plain || []).includes(model); // known not to accept the thinking setting
+      let res = await timedFetch(url, { method: 'POST', headers, body: bodyFor(model, !plain) }, AI_TIMEOUT);
+      if (!plain && res.status === 400 && /thinking/i.test(await errorFrom(res))) { // → once more without it, and remember
+        memSet('g', key, { plain: [...((memGet('g', key) || {}).plain || []), model] });
+        res = await timedFetch(url, { method: 'POST', headers, body: bodyFor(model, false) }, AI_TIMEOUT);
+      }
       if (res.ok) {
         const j = await res.json();
         const txt = (j?.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
+        memSet('g', key, { last: model });
         return { txt, model };
       }
       const msg = await errorFrom(res);
@@ -263,7 +304,7 @@ Return the values PER 100 g (or per 100 ml for drinks).
 
   async function aiScan(file, key, onProgress) {
     onProgress && onProgress(0.15, 'שולח ל־AI (Gemini)…');
-    const data = await toJpegBase64(file, 1400);
+    const data = await toJpegBase64(file, 1100);
     onProgress && onProgress(0.35, 'ה־AI קורא את התווית…');
     const { txt } = await geminiCall(key, [{ inline_data: { mime_type: 'image/jpeg', data } }, { text: PROMPT }], true);
     onProgress && onProgress(1, 'מוכן');
@@ -292,20 +333,21 @@ Return the values PER 100 g (or per 100 ml for drinks).
   /* ---------- Groq (free tier, OpenAI-compatible) ---------- */
   const GROQ = 'https://api.groq.com/openai/v1/';
   // newest first; the list is checked against the models the key can actually use
-  const GROQ_PREFERRED = ['qwen/qwen3.6-27b', 'meta-llama/llama-4-maverick-17b-128e-instruct', 'meta-llama/llama-4-scout-17b-16e-instruct'];
+  const GROQ_PREFERRED = ['qwen/qwen3.8-27b', 'qwen/qwen3.6-27b', 'meta-llama/llama-4-maverick-17b-128e-instruct', 'meta-llama/llama-4-scout-17b-16e-instruct'];
   const GROQ_VISION = /vision|vl\b|-vl-|scout|maverick|qwen3\.\d+-\d+b|gemma-?3|llava/i;
 
   async function groqModels(key) {
-    if (modelCache.q && modelCache.q.key === key) return modelCache.q.list;
-    let res;
-    try { res = await fetch(`${GROQ}models`, { headers: { Authorization: `Bearer ${key}` } }); }
-    catch (e) { throw new AiError('network'); }
+    if (modelCache.q && modelCache.q.key === key) return withLastFirst(modelCache.q.list, (memGet('q', key) || {}).last);
+    const mem = memGet('q', key);
+    if (mem && mem.list) { modelCache.q = { key, list: mem.list }; return withLastFirst(mem.list, mem.last); }
+    const res = await timedFetch(`${GROQ}models`, { headers: { Authorization: `Bearer ${key}` } }, LIST_TIMEOUT);
     if (res.status === 401 || res.status === 403) throw new AiError('key', await errorFrom(res), res.status);
     if (!res.ok) return GROQ_PREFERRED;
     const j = await res.json();
     const avail = (j.data || []).filter(m => m.active !== false).map(m => m.id);
     const list = [...new Set([...GROQ_PREFERRED.filter(id => avail.includes(id)), ...avail.filter(id => GROQ_VISION.test(id))])];
     modelCache.q = { key, list: list.length ? list : GROQ_PREFERRED };
+    memSet('q', key, { list: modelCache.q.list });
     return modelCache.q.list;
   }
 
@@ -314,15 +356,18 @@ Return the values PER 100 g (or per 100 ml for drinks).
     if (!key) throw new AiError('key', 'אין מפתח');
     const models = await groqModels(key);
     const errs = [];
-    for (const model of models.slice(0, 4)) {
-      let res;
-      try {
-        res = await fetch(`${GROQ}chat/completions`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-          body: JSON.stringify({ model, temperature: 0, max_completion_tokens: maxTokens || 1500, messages: [{ role: 'user', content }] }),
-        });
-      } catch (e) { throw new AiError('network'); }
-      if (res.ok) { const j = await res.json(); return { txt: j?.choices?.[0]?.message?.content || '', model }; }
+    for (const model of models.slice(0, 3)) {
+      // Qwen 3.x "thinks" by default; reasoning_effort "none" switches that off
+      const bodyFor = noThink => {
+        const b = { model, temperature: 0, max_completion_tokens: maxTokens || 600, messages: [{ role: 'user', content }] };
+        if (noThink && /qwen3/i.test(model)) b.reasoning_effort = 'none';
+        return JSON.stringify(b);
+      };
+      const opts = b => ({ method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: b });
+      let res = await timedFetch(`${GROQ}chat/completions`, opts(bodyFor(true)), AI_TIMEOUT);
+      if (res.status === 400 && /reasoning/i.test(await errorFrom(res)))
+        res = await timedFetch(`${GROQ}chat/completions`, opts(bodyFor(false)), AI_TIMEOUT);
+      if (res.ok) { const j = await res.json(); memSet('q', key, { last: model }); return { txt: j?.choices?.[0]?.message?.content || '', model }; }
       const msg = await errorFrom(res);
       if (res.status === 401 || res.status === 403) throw new AiError('key', msg, res.status);
       if (res.status === 429) { errs.push(new AiError('quota', msg, 429)); continue; }
@@ -333,7 +378,7 @@ Return the values PER 100 g (or per 100 ml for drinks).
 
   async function groqScan(file, key, onProgress) {
     onProgress && onProgress(0.15, 'שולח ל־AI (Groq)…');
-    const data = await toJpegBase64(file, 1280);
+    const data = await toJpegBase64(file, 1100);
     onProgress && onProgress(0.35, 'ה־AI קורא את התווית…');
     const { txt } = await groqCall(key, [
       { type: 'text', text: PROMPT + '\nReply with ONLY a single JSON object (no other text) with exactly these keys: ' + KEYS.join(', ') + ', name, servingGrams, basisMl.' },
@@ -344,6 +389,12 @@ Return the values PER 100 g (or per 100 ml for drinks).
   }
 
   /* quick check from the settings screen: is the key accepted, and which model answers? */
+  /* get the model lists ready in the background when the scan screen opens */
+  function warm(keys) {
+    if (keys.gemini) geminiModels(cleanKey(keys.gemini)).catch(() => {});
+    if (keys.groq) groqModels(cleanKey(keys.groq)).catch(() => {});
+  }
+
   async function testKey(service, key) {
     const r = service === 'gemini'
       ? await geminiCall(key, [{ text: 'Reply with the single word OK' }], false)
@@ -407,7 +458,7 @@ Return the values PER 100 g (or per 100 ml for drinks).
     return r;
   }
 
-  const api = { parse, consistent, scan, aiScan, groqScan, testKey, cleanKey, detectBarcode, getDetector, lookupBarcode };
+  const api = { parse, consistent, scan, aiScan, groqScan, testKey, warm, cleanKey, detectBarcode, getDetector, lookupBarcode };
   root.KaloriScan = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

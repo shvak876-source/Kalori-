@@ -49,7 +49,7 @@ const KEY_STORE = { gemini: 'kalori.aikey', groq: 'kalori.groqkey' };
 function getKey(n) { try { return localStorage.getItem(KEY_STORE[n]) || ''; } catch (e) { return ''; } }
 function setKey(n, k) { try { k ? localStorage.setItem(KEY_STORE[n], k) : localStorage.removeItem(KEY_STORE[n]); } catch (e) { /* ignore */ } }
 const hasAi = () => !!(getKey('gemini') || getKey('groq'));
-const AI_ERR = { key: 'מפתח לא תקין', quota: 'נגמרה המכסה', network: 'אין חיבור', parse: 'תשובה לא ברורה', model: 'הדגם לא זמין', server: 'שגיאת שרת' };
+const AI_ERR = { key: 'מפתח לא תקין', quota: 'נגמרה המכסה', network: 'אין חיבור', timeout: 'לא ענה בזמן', parse: 'תשובה לא ברורה', model: 'הדגם לא זמין', server: 'שגיאת שרת' };
 
 /* ---------- helpers ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -543,6 +543,7 @@ const KEY_HELP = {
   network: 'החיבור לשירות נחסם. אם פתחתם את האפליקציה דרך הקישור של Claude, זה צפוי: השתמשו בכתובת של GitHub Pages. אחרת, בדקו אינטרנט.',
   model: 'המפתח תקין, אבל לא נמצא דגם זמין שקורא תמונות.',
   server: 'השירות לא ענה כרגע. נסו שוב בעוד רגע.',
+  timeout: 'השירות לא ענה תוך 15 שניות. נסו שוב, או בדקו את האינטרנט.',
   parse: 'השירות ענה בצורה לא צפויה.',
 };
 const keyState = {}; // n → { status: 'testing'|'ok'|'err', text }
@@ -614,6 +615,7 @@ function bindProfileForm(root, onboarding) {
       const n = inp.dataset.key;
       const k = KaloriScan.cleanKey(inp.value);
       setKey(n, k); inp.value = k;
+      try { localStorage.removeItem('kalori.aimodels'); } catch (e) { /* ignore */ }
       $('#ai-status').textContent = aiStatus();
       drawKeyState(n);
       if (k) testKeyNow(n); else toast(`${n === 'gemini' ? 'Gemini' : 'Groq'} נותק`);
@@ -779,6 +781,7 @@ const GRAM_CHIPS = [30, 50, 100, 150, 200, 250];
 function drawScan(body) {
   const st = scanState;
   if (!st || st.phase === 'idle' || st.phase === 'error') {
+    KaloriScan.warm({ gemini: getKey('gemini'), groq: getKey('groq') });
     const bc = st && st.barcode;
     body.innerHTML = `
       ${bc ? `<div class="notice">${st.error ? esc(st.error) : `ברקוד <b dir="ltr">${esc(bc)}</b> לא נמצא במאגר${st.pendingName ? ` (או שחסרים בו ערכים)` : ''}.`}
@@ -833,7 +836,8 @@ function drawScan(body) {
         ${st.photo ? `<div class="scanprev" style="background-image:url('${st.photo}')"></div>` : ''}
         <div class="note" style="margin:12px 0 8px">${esc(st.msg || 'קורא…')}</div>
         <div class="pbar"><i style="width:${Math.round(st.progress * 100)}%"></i></div>
-      </div>`;
+      </div>
+      <button class="link" style="display:block;margin:10px auto 0" data-act="scan-again">ביטול</button>`;
     return;
   }
   // phase: edit
@@ -955,7 +959,7 @@ async function runScan(file) {
       }
     }
     if (!r) {
-      if (fails.length) toast(`${fails.join(' · ')} — עובר לסורק הרגיל. אפשר לבדוק את המפתחות בלשונית "יעדים".`);
+      if (fails.length) toast(`${fails.join(' · ')} — עובר לסורק שבטלפון (איטי יותר). אפשר לבדוק את המפתחות בלשונית "יעדים".`);
       r = await KaloriScan.scan(file, prog);
     } else if (fails.length) toast(`${fails.join(' · ')} — נסרק עם ${r.source}`);
     if (!scanState) return;
