@@ -309,3 +309,10 @@ details.more[open] summary::before { content: '− '; }
   color: #ffd2ad; font-size: 13px; line-height: 1.5; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
 .offline b { color: var(--orange); font-size: 14px; }
 body:has(.offline) #view { padding-top: calc(var(--safe-t) + 86px); }
+
+/* ---------- AI key check ---------- */
+.keystate { font-size: 13px; line-height: 1.5; margin-top: 8px; color: var(--muted); }
+.keystate:empty { display: none; }
+.keystate.ok { color: var(--lime); }
+.keystate.err { color: #ffb37a; }
+.keystate .link { font-size: 13px; margin-inline-start: 6px; }

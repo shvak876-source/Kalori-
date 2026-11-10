@@ -160,8 +160,7 @@
     return Object.assign(parse(data.text), { text: data.text });
   }
 
-  /* ---------- AI scan (Google Gemini, free tier with the user's own key) ---------- */
-  const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+  /* ---------- AI label reading (Gemini / Groq, free tiers with the user's own keys) ---------- */
   const KEYS = ['kcal', 'protein', 'carbs', 'sugar', 'fat', 'satFat', 'fiber', 'sodium'];
   const PROMPT = `You read nutrition-facts labels (often Hebrew, Israeli format "ערכים תזונתיים").
 Return the values PER 100 g (or per 100 ml for drinks).
@@ -197,43 +196,84 @@ Return the values PER 100 g (or per 100 ml for drinks).
     });
   }
 
-  class AiError extends Error { constructor(kind, msg) { super(msg || kind); this.kind = kind; } }
+  /* kind: key | quota | network | model | server | parse ; detail: the service's own message */
+  class AiError extends Error {
+    constructor(kind, detail, status) { super(detail || kind); this.kind = kind; this.detail = detail || ''; this.status = status || 0; }
+  }
+  async function errorFrom(res) {
+    let msg = '';
+    try { const j = await res.clone().json(); msg = (j && j.error && (j.error.message || j.error.status)) || ''; }
+    catch (e) { try { msg = (await res.text()).slice(0, 300); } catch (e2) { /* ignore */ } }
+    return msg;
+  }
+  // keep only printable ASCII (drops spaces, quotes, line breaks and invisible characters from a pasted key)
+  const cleanKey = k => String(k || '').replace(/["'`]/g, '').replace(/[^\x21-\x7E]/g, '');
+
+  /* ---------- Google Gemini ---------- */
+  const GEMINI = 'https://generativelanguage.googleapis.com/v1beta/';
+  const GEMINI_PREFERRED = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-flash-lite-latest'];
+  const modelCache = {};
+
+  async function geminiModels(key) {
+    if (modelCache.g && modelCache.g.key === key) return modelCache.g.list;
+    let res;
+    try { res = await fetch(`${GEMINI}models?pageSize=200`, { headers: { 'x-goog-api-key': key } }); }
+    catch (e) { throw new AiError('network'); }
+    if (!res.ok) {
+      const msg = await errorFrom(res);
+      if (res.status === 400 || res.status === 401 || res.status === 403) throw new AiError('key', msg, res.status);
+      return GEMINI_PREFERRED; // listing failed for another reason → just try the usual names
+    }
+    const j = await res.json();
+    const avail = (j.models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map(m => m.name.replace(/^models\//, ''));
+    const flash = avail.filter(id => /^gemini-[\d.]+-flash$/.test(id))
+      .sort((a, b) => parseFloat(b.slice(7)) - parseFloat(a.slice(7)));
+    const list = [...new Set([...GEMINI_PREFERRED.filter(id => avail.includes(id)), ...flash, ...avail.filter(id => /^gemini-.*flash/.test(id) && !/image|tts|audio|live|embed/.test(id))])];
+    modelCache.g = { key, list: list.length ? list : GEMINI_PREFERRED };
+    return modelCache.g.list;
+  }
+
+  async function geminiCall(key, parts, json) {
+    key = cleanKey(key);
+    if (!key) throw new AiError('key', 'אין מפתח');
+    const models = await geminiModels(key);
+    const body = JSON.stringify({
+      contents: [{ parts }],
+      generationConfig: json ? { temperature: 0, responseMimeType: 'application/json', responseSchema: SCHEMA } : { temperature: 0, maxOutputTokens: 20 },
+    });
+    const errs = [];
+    for (const model of models.slice(0, 5)) {
+      let res;
+      try { res = await fetch(`${GEMINI}models/${model}:generateContent`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body }); }
+      catch (e) { throw new AiError('network'); }
+      if (res.ok) {
+        const j = await res.json();
+        const txt = (j?.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
+        return { txt, model };
+      }
+      const msg = await errorFrom(res);
+      if ((res.status === 400 || res.status === 401 || res.status === 403) && /api[ _]?key|API_KEY_INVALID|unauthenticated|credential/i.test(msg)) throw new AiError('key', msg, res.status);
+      if (res.status === 429) { errs.push(new AiError('quota', msg, 429)); continue; } // this model's free quota is used up → try another
+      errs.push(new AiError(res.status === 404 || res.status === 400 || res.status === 403 ? 'model' : 'server', msg, res.status));
+    }
+    throw errs.find(e => e.kind === 'quota') || errs[0] || new AiError('model');
+  }
 
   async function aiScan(file, key, onProgress) {
-    onProgress && onProgress(0.15, 'שולח ל־AI…');
+    onProgress && onProgress(0.15, 'שולח ל־AI (Gemini)…');
     const data = await toJpegBase64(file, 1400);
     onProgress && onProgress(0.35, 'ה־AI קורא את התווית…');
-    const body = JSON.stringify({
-      contents: [{ parts: [{ inline_data: { mime_type: 'image/jpeg', data } }, { text: PROMPT }] }],
-      generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: SCHEMA },
-    });
-    let lastErr;
-    for (const model of GEMINI_MODELS) {
-      let res;
-      try {
-        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body,
-        });
-      } catch (e) { throw new AiError('network'); }
-      if (res.status === 404) { lastErr = new AiError('model'); continue; } // model renamed → try next
-      if (res.status === 429) throw new AiError('quota');
-      if (res.status === 400 || res.status === 401 || res.status === 403) {
-        const t = await res.text();
-        if (/API key|API_KEY|permission|PERMISSION/i.test(t)) throw new AiError('key');
-        lastErr = new AiError('bad', t.slice(0, 200)); continue;
-      }
-      if (!res.ok) { lastErr = new AiError('server'); continue; }
-      const j = await res.json();
-      const txt = j?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
-      onProgress && onProgress(1, 'מוכן');
-      return normalizeAi(parseJson(txt), 'Gemini');
-    }
-    throw lastErr || new AiError('server');
+    const { txt } = await geminiCall(key, [{ inline_data: { mime_type: 'image/jpeg', data } }, { text: PROMPT }], true);
+    onProgress && onProgress(1, 'מוכן');
+    return normalizeAi(parseJson(txt), 'Gemini');
   }
 
   function parseJson(txt) {
-    const m = String(txt).match(/\{[\s\S]*\}/);
-    try { return JSON.parse(m ? m[0] : txt); } catch (e) { throw new AiError('parse'); }
+    const t = String(txt).replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?/gi, '');
+    const a = t.indexOf('{'), b = t.lastIndexOf('}');
+    try { return JSON.parse(a >= 0 && b > a ? t.slice(a, b + 1) : t); } catch (e) { throw new AiError('parse', String(txt).slice(0, 200)); }
   }
   function normalizeAi(o, source) {
     const vals = {}, found = {};
@@ -248,36 +288,67 @@ Return the values PER 100 g (or per 100 ml for drinks).
     return { vals, found, estimated, basisMl: !!o.basisMl, name: typeof o.name === 'string' ? o.name : '', servingGrams: Number(o.servingGrams) || null, ai: true, source };
   }
 
-  /* ---------- AI scan via Groq (free tier, OpenAI-compatible API) ---------- */
-  const GROQ_MODELS = ['meta-llama/llama-4-scout-17b-16e-instruct', 'qwen/qwen3.6-27b', 'meta-llama/llama-4-maverick-17b-128e-instruct'];
+
+  /* ---------- Groq (free tier, OpenAI-compatible) ---------- */
+  const GROQ = 'https://api.groq.com/openai/v1/';
+  // newest first; the list is checked against the models the key can actually use
+  const GROQ_PREFERRED = ['qwen/qwen3.6-27b', 'meta-llama/llama-4-maverick-17b-128e-instruct', 'meta-llama/llama-4-scout-17b-16e-instruct'];
+  const GROQ_VISION = /vision|vl\b|-vl-|scout|maverick|qwen3\.\d+-\d+b|gemma-?3|llava/i;
+
+  async function groqModels(key) {
+    if (modelCache.q && modelCache.q.key === key) return modelCache.q.list;
+    let res;
+    try { res = await fetch(`${GROQ}models`, { headers: { Authorization: `Bearer ${key}` } }); }
+    catch (e) { throw new AiError('network'); }
+    if (res.status === 401 || res.status === 403) throw new AiError('key', await errorFrom(res), res.status);
+    if (!res.ok) return GROQ_PREFERRED;
+    const j = await res.json();
+    const avail = (j.data || []).filter(m => m.active !== false).map(m => m.id);
+    const list = [...new Set([...GROQ_PREFERRED.filter(id => avail.includes(id)), ...avail.filter(id => GROQ_VISION.test(id))])];
+    modelCache.q = { key, list: list.length ? list : GROQ_PREFERRED };
+    return modelCache.q.list;
+  }
+
+  async function groqCall(key, content, maxTokens) {
+    key = cleanKey(key);
+    if (!key) throw new AiError('key', 'אין מפתח');
+    const models = await groqModels(key);
+    const errs = [];
+    for (const model of models.slice(0, 4)) {
+      let res;
+      try {
+        res = await fetch(`${GROQ}chat/completions`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+          body: JSON.stringify({ model, temperature: 0, max_completion_tokens: maxTokens || 1500, messages: [{ role: 'user', content }] }),
+        });
+      } catch (e) { throw new AiError('network'); }
+      if (res.ok) { const j = await res.json(); return { txt: j?.choices?.[0]?.message?.content || '', model }; }
+      const msg = await errorFrom(res);
+      if (res.status === 401 || res.status === 403) throw new AiError('key', msg, res.status);
+      if (res.status === 429) { errs.push(new AiError('quota', msg, 429)); continue; }
+      errs.push(new AiError(res.status === 404 || res.status === 400 ? 'model' : 'server', msg, res.status));
+    }
+    throw errs.find(e => e.kind === 'quota') || errs[0] || new AiError('model');
+  }
+
   async function groqScan(file, key, onProgress) {
     onProgress && onProgress(0.15, 'שולח ל־AI (Groq)…');
     const data = await toJpegBase64(file, 1280);
     onProgress && onProgress(0.35, 'ה־AI קורא את התווית…');
-    let lastErr;
-    for (const model of GROQ_MODELS) {
-      let res;
-      try {
-        res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-          body: JSON.stringify({
-            model, temperature: 0, response_format: { type: 'json_object' },
-            messages: [{ role: 'user', content: [
-              { type: 'text', text: PROMPT + '\nReply with a single JSON object with exactly these keys: ' + KEYS.join(', ') + ', name, servingGrams, basisMl.' },
-              { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + data } },
-            ] }],
-          }),
-        });
-      } catch (e) { throw new AiError('network'); }
-      if (res.status === 401 || res.status === 403) throw new AiError('key');
-      if (res.status === 429) throw new AiError('quota');
-      if (!res.ok) { lastErr = new AiError(res.status === 404 || res.status === 400 ? 'model' : 'server'); continue; }
-      const j = await res.json();
-      onProgress && onProgress(1, 'מוכן');
-      return normalizeAi(parseJson(j?.choices?.[0]?.message?.content || ''), 'Groq');
-    }
-    throw lastErr || new AiError('server');
+    const { txt } = await groqCall(key, [
+      { type: 'text', text: PROMPT + '\nReply with ONLY a single JSON object (no other text) with exactly these keys: ' + KEYS.join(', ') + ', name, servingGrams, basisMl.' },
+      { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + data } },
+    ]);
+    onProgress && onProgress(1, 'מוכן');
+    return normalizeAi(parseJson(txt), 'Groq');
+  }
+
+  /* quick check from the settings screen: is the key accepted, and which model answers? */
+  async function testKey(service, key) {
+    const r = service === 'gemini'
+      ? await geminiCall(key, [{ text: 'Reply with the single word OK' }], false)
+      : await groqCall(key, 'Reply with the single word OK', 300);
+    return { model: r.model };
   }
 
   /* ---------- barcode ---------- */
@@ -336,7 +407,7 @@ Return the values PER 100 g (or per 100 ml for drinks).
     return r;
   }
 
-  const api = { parse, consistent, scan, aiScan, groqScan, detectBarcode, getDetector, lookupBarcode };
+  const api = { parse, consistent, scan, aiScan, groqScan, testKey, cleanKey, detectBarcode, getDetector, lookupBarcode };
   root.KaloriScan = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

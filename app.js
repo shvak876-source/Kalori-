@@ -510,6 +510,7 @@ function viewSettings() {
         <li>לוחצים <b>Create API key</b>, מעתיקים ומדביקים:</li>
       </ol>
       <input class="input" data-key="gemini" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza…" value="${esc(getKey('gemini'))}">
+      <div class="keystate" id="keystate-gemini"></div>
     </div>
 
     <div class="keybox">
@@ -519,6 +520,7 @@ function viewSettings() {
         <li>לוחצים <b>Create API Key</b>, מעתיקים ומדביקים:</li>
       </ol>
       <input class="input" data-key="groq" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="gsk_…" value="${esc(getKey('groq'))}">
+      <div class="keystate" id="keystate-groq"></div>
     </div>
 
     <p class="note" style="margin:10px 0 0">המפתחות נשמרים רק בטלפון הזה ולא נכנסים לגיבוי. בגרסאות החינמיות יש מגבלת כמות (מספיקה לשימוש אישי), והשירותים רשאים להשתמש בתמונות לשיפור — אז לצלם רק את התווית.</p>
@@ -535,6 +537,36 @@ function viewSettings() {
   </section>`;
 }
 
+const KEY_HELP = {
+  key: 'המפתח לא התקבל. העתיקו אותו שוב, בשלמותו, מהאתר.',
+  quota: 'המפתח תקין, אבל המכסה החינמית נגמרה כרגע. נסו שוב מאוחר יותר.',
+  network: 'החיבור לשירות נחסם. אם פתחתם את האפליקציה דרך הקישור של Claude, זה צפוי: השתמשו בכתובת של GitHub Pages. אחרת, בדקו אינטרנט.',
+  model: 'המפתח תקין, אבל לא נמצא דגם זמין שקורא תמונות.',
+  server: 'השירות לא ענה כרגע. נסו שוב בעוד רגע.',
+  parse: 'השירות ענה בצורה לא צפויה.',
+};
+const keyState = {}; // n → { status: 'testing'|'ok'|'err', text }
+function drawKeyState(n) {
+  const el = document.getElementById('keystate-' + n); if (!el) return;
+  const st = keyState[n];
+  const has = !!getKey(n);
+  el.className = 'keystate ' + (st ? st.status : '');
+  el.innerHTML = !has ? '' : !st ? `<button class="link" data-act="test-key" data-k="${n}">בדיקת המפתח</button>`
+    : st.status === 'testing' ? 'בודק…'
+    : `${esc(st.text)} <button class="link" data-act="test-key" data-k="${n}">בדיקה חוזרת</button>`;
+}
+async function testKeyNow(n) {
+  keyState[n] = { status: 'testing' }; drawKeyState(n);
+  try {
+    const r = await KaloriScan.testKey(n, getKey(n));
+    keyState[n] = { status: 'ok', text: `✓ עובד (${r.model})` };
+    setOnline(true);
+  } catch (e) {
+    const why = KEY_HELP[e.kind] || 'משהו השתבש.';
+    keyState[n] = { status: 'err', text: `✗ ${why}${e.detail ? ` — "${String(e.detail).slice(0, 160)}"` : ''}` };
+  }
+  drawKeyState(n);
+}
 function aiStatus() {
   const on = [getKey('gemini') && 'Gemini', getKey('groq') && 'Groq'].filter(Boolean);
   return on.length ? `מחובר: ${on.join(' + ')}` : 'לא מחובר';
@@ -579,11 +611,14 @@ function bindProfileForm(root, onboarding) {
     ok.addEventListener('input', ov); op.addEventListener('input', ov);
     $('#import').addEventListener('change', importBackup);
     document.querySelectorAll('[data-key]').forEach(inp => inp.addEventListener('change', () => {
-      const n = inp.dataset.key, name = n === 'gemini' ? 'Gemini' : 'Groq';
-      setKey(n, inp.value.trim());
+      const n = inp.dataset.key;
+      const k = KaloriScan.cleanKey(inp.value);
+      setKey(n, k); inp.value = k;
       $('#ai-status').textContent = aiStatus();
-      toast(getKey(n) ? `${name} חובר ✨` : `${name} נותק`);
+      drawKeyState(n);
+      if (k) testKeyNow(n); else toast(`${n === 'gemini' ? 'Gemini' : 'Groq'} נותק`);
     }));
+    ['gemini', 'groq'].forEach(drawKeyState);
   }
 }
 
@@ -905,18 +940,22 @@ async function runScan(file) {
   };
   try {
     let r = null;
+    // Always try the AI (the phone's online/offline flag is not reliable); a real
+    // network failure comes back fast and we fall through to the on-device reader.
     const chain = [];
-    if (!navigator.onLine) { /* offline → straight to the on-device reader */ }
-    else if (getKey('gemini')) chain.push(['Gemini', () => KaloriScan.aiScan(file, getKey('gemini'), prog)]);
-    if (navigator.onLine && getKey('groq')) chain.push(['Groq', () => KaloriScan.groqScan(file, getKey('groq'), prog)]);
+    if (getKey('gemini')) chain.push(['Gemini', () => KaloriScan.aiScan(file, getKey('gemini'), prog)]);
+    if (getKey('groq')) chain.push(['Groq', () => KaloriScan.groqScan(file, getKey('groq'), prog)]);
     const fails = [];
     for (const [name, run] of chain) {
-      try { r = await run(); break; }
-      catch (e) { fails.push(`${name}: ${AI_ERR[e.kind] || 'לא זמין'}`); if (scanState) scanState.progress = 0; }
+      try { r = await run(); setOnline(true); break; }
+      catch (e) {
+        fails.push(`${name}: ${AI_ERR[e.kind] || 'לא זמין'}`);
+        if (e.kind === 'network') checkOnline();
+        if (scanState) scanState.progress = 0;
+      }
     }
     if (!r) {
-      if (fails.length) toast(`${fails.join(' · ')} — עובר לסורק הרגיל`);
-      else if (!navigator.onLine && hasAi()) toast('אין אינטרנט — קורא עם הסורק שבטלפון');
+      if (fails.length) toast(`${fails.join(' · ')} — עובר לסורק הרגיל. אפשר לבדוק את המפתחות בלשונית "יעדים".`);
       r = await KaloriScan.scan(file, prog);
     } else if (fails.length) toast(`${fails.join(' · ')} — נסרק עם ${r.source}`);
     if (!scanState) return;
@@ -992,19 +1031,15 @@ async function handleBarcode(raw) {
     scanState = null; drawScan(body); drawAddCount();
     return;
   }
-  // 2) offline → can't look it up; offer the label scan (works offline)
-  if (!navigator.onLine) {
-    scanState = { phase: 'idle', barcode: code, error: 'אין אינטרנט, אז אי אפשר לחפש מוצר חדש במאגר.' };
-    return drawScan(body);
-  }
-  // 3) look it up in Open Food Facts
+  // 2) look it up in Open Food Facts
   scanState = { phase: 'reading', progress: 0.5, msg: `מחפש את ${code} במאגר המוצרים…`, barcode: code };
   drawScan(body);
   let r = null;
-  try { r = await KaloriScan.lookupBarcode(code); }
+  try { r = await KaloriScan.lookupBarcode(code); setOnline(true); }
   catch (e) {
     if (!scanState || scanState.barcode !== code) return;
-    scanState = { phase: 'idle', barcode: code, error: navigator.onLine ? 'אין חיבור למאגר המוצרים כרגע.' : 'אין אינטרנט, אז אי אפשר לחפש מוצר חדש במאגר.' };
+    checkOnline();
+    scanState = { phase: 'idle', barcode: code, error: 'אין חיבור למאגר המוצרים כרגע (אולי אין אינטרנט).' };
     return drawScan($('#addbody'));
   }
   if (!scanState || scanState.barcode !== code) return;
@@ -1228,6 +1263,7 @@ document.addEventListener('click', ev => {
     case 'goto-ai': closeSheet(true); tab = 'settings'; render(); setTimeout(() => $('#ai-card').scrollIntoView({ behavior: 'smooth' }), 50); break;
     case 'scan-again': stopCamera(); scanState = null; drawScan($('#addbody')); break;
     case 'barcode-start': startBarcode(); break;
+    case 'test-key': testKeyNow(t.dataset.k); break;
     case 'scan-photo': if (scanState) { scanState.showPhoto = !scanState.showPhoto; drawScan($('#addbody')); } break;
     case 'scan-manual': {
       const vals = {}; NUTR.forEach(n => { vals[n.k] = null; });
@@ -1282,10 +1318,29 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && tab === 'today' && !openSheet) render();
 });
 
-/* offline indicator */
+/* offline indicator — shown only when a real request fails.
+   navigator.onLine alone is not trusted: on some iPhones it says "offline" while on Wi‑Fi. */
+let isOnline = true;
+function setOnline(v) {
+  if (v === isOnline) return;
+  isOnline = v;
+  drawOffline();
+  if (v) toast('חזר האינטרנט ✓');
+}
+let checkingOnline = null;
+function checkOnline() {
+  if (checkingOnline) return checkingOnline;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 6000);
+  // "__probe" is never answered from the offline cache (see sw.js)
+  checkingOnline = fetch(`manifest.json?__probe=${Date.now()}`, { cache: 'no-store', signal: ctrl.signal })
+    .then(r => setOnline(r.ok || r.status > 0), () => setOnline(false))
+    .finally(() => { clearTimeout(t); checkingOnline = null; });
+  return checkingOnline;
+}
 function drawOffline() {
   let el = document.getElementById('offline');
-  if (navigator.onLine) { if (el) el.remove(); return; }
+  if (isOnline) { if (el) el.remove(); return; }
   if (!el) {
     el = document.createElement('div');
     el.id = 'offline';
@@ -1294,9 +1349,9 @@ function drawOffline() {
     document.body.appendChild(el);
   }
 }
-window.addEventListener('online', () => { drawOffline(); toast('חזר האינטרנט ✓'); });
-window.addEventListener('offline', drawOffline);
-drawOffline();
+window.addEventListener('online', checkOnline);
+window.addEventListener('offline', checkOnline);
+if (navigator.onLine === false) checkOnline();
 
 render();
 
